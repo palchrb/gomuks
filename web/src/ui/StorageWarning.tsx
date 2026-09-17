@@ -13,7 +13,7 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import type WasmClient from "@/api/wasmclient.ts"
 import { useEventAsState } from "@/util/eventdispatcher.ts"
 import { isPWA } from "@/util/ismobile.ts"
@@ -34,7 +34,20 @@ function wasDismissed(): boolean {
 const StorageWarning = ({ rpc }: { rpc: WasmClient }) => {
 	const status = useEventAsState(rpc.storageStatus)
 	const [dismissed, setDismissed] = useState(wasDismissed)
-	if (dismissed || !status || status.persisted !== false || isPWA) {
+	const [requested, setRequested] = useState(false)
+	const visible = !dismissed && status?.persisted === false && !isPWA
+	// Chrome weighs site engagement, so ask again after the first interaction.
+	useEffect(() => {
+		if (!visible) {
+			return
+		}
+		const retry = () => {
+			rpc.requestPersistentStorage().catch(() => {})
+		}
+		document.addEventListener("pointerdown", retry, { once: true, passive: true })
+		return () => document.removeEventListener("pointerdown", retry)
+	}, [visible, rpc])
+	if (!visible) {
 		return null
 	}
 	const dismiss = () => {
@@ -45,12 +58,20 @@ const StorageWarning = ({ rpc }: { rpc: WasmClient }) => {
 		}
 		setDismissed(true)
 	}
+	const request = () => {
+		setRequested(true)
+		rpc.requestPersistentStorage().catch(err => console.warn("Persistent storage request failed", err))
+	}
 	return <div className="storage-warning">
 		<span>
 			The browser hasn't granted persistent storage, so it may delete your local
 			message database and encryption keys if this site isn't used for a while.
-			Adding gomuks to your home screen or bookmarks usually prevents that.
+			{requested
+				? " Still not granted. Chrome grants it to sites that are installed as an app, bookmarked," +
+					" or allowed to send notifications; Safari only to apps on the home screen."
+				: " Firefox will ask you; in Chrome, install this site as an app, bookmark it, or allow notifications."}
 		</span>
+		<button onClick={request}>Request persistent storage</button>
 		<button onClick={dismiss}>Dismiss</button>
 	</div>
 }

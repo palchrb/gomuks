@@ -415,3 +415,13 @@ div.storage-warning {
 		flex-shrink: 0;
 	}
 }
+
+div.data-lost-notice {
+	max-width: 30rem;
+	margin: 0 auto 1rem;
+	padding: .75rem 1rem;
+	border: 2px solid var(--error-color);
+	border-radius: .5rem;
+	background-color: var(--background-color);
+	font-size: .9rem;
+}

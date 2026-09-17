@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import React, { use, useCallback, useEffect, useRef, useState } from "react"
 import type Client from "@/api/client.ts"
+import { DATA_LOST_KEY } from "@/api/client.ts"
 import { hasTabs } from "@/api/tabs.ts"
 import type {
 	ClientState,
@@ -68,7 +69,18 @@ const redirectClientRegistrationParams: OAuthClientMetadataRequest = {
 	redirect_uris: [isLocalhost ? "http://localhost" + window.location.pathname : clientURI],
 }
 
+function takeDataLostFlag(): boolean {
+	try {
+		const lost = localStorage.getItem(DATA_LOST_KEY) === "true"
+		localStorage.removeItem(DATA_LOST_KEY)
+		return lost
+	} catch {
+		return false
+	}
+}
+
 export const LoginScreen = ({ client }: LoginScreenProps) => {
+	const [dataLost] = useState(takeDataLostFlag)
 	const [username, setUsername] = useState("")
 	const [password, setPassword] = useState("")
 	const [homeserverURL, setHomeserverURL] = useState("")
@@ -320,6 +332,11 @@ export const LoginScreen = ({ client }: LoginScreenProps) => {
 	const supportsAnySSO = supportsCodeSSO || supportsRedirectSSO
 	return <main className="matrix-login">
 		<h1>gomuks web</h1>
+		{dataLost && <div className="data-lost-notice">
+			The browser removed gomuks' local data (message database and encryption keys),
+			so this session was logged out. Log in again to continue; you may need to verify
+			the new session from another device or with your recovery key.
+		</div>}
 		<form onSubmit={login}>
 			<input
 				type="text"

@@ -44,6 +44,9 @@ import {
 } from "./types"
 import WasmClient from "./wasmclient.ts"
 
+export const HAD_ACCOUNT_KEY = "gomuks_wasm_had_account"
+export const DATA_LOST_KEY = "gomuks_wasm_data_lost"
+
 export default class Client {
 	readonly state = new CachedEventDispatcher<ClientState>()
 	readonly profile = new NonNullCachedEventDispatcher<UserProfile>({})
@@ -91,7 +94,35 @@ export default class Client {
 					avatar_url: state.avatar_url,
 				})
 			}
+			this.#trackLocalDataLoss(state)
 		})
+	}
+
+	#loggingOut = false
+
+	// In the wasm build the browser can evict the database. When the backend
+	// then reports "not logged in" although this browser had an account,
+	// drop the stale room list cache and leave a note for the login screen.
+	#trackLocalDataLoss(state: ClientState) {
+		if (!(this.rpc instanceof WasmClient)) {
+			return
+		}
+		try {
+			if (state.is_logged_in) {
+				localStorage.setItem(HAD_ACCOUNT_KEY, "true")
+			} else if (!this.#loggingOut && state.is_initialized) {
+				const hadAccount = localStorage.getItem(HAD_ACCOUNT_KEY) === "true"
+				localStorage.removeItem(HAD_ACCOUNT_KEY)
+				if (hadAccount) {
+					console.warn("Backend has no account but this browser had one before: local data was lost")
+					localStorage.setItem(DATA_LOST_KEY, "true")
+					this.store.clear()
+					this.store.deleteCache().catch(err => console.warn("Failed to delete state cache", err))
+				}
+			}
+		} catch (err) {
+			console.warn("Failed to track local data loss", err)
+		}
 	}
 
 	// The IndexedDB room list cache is used in low bandwidth SSE mode and in
@@ -210,6 +241,10 @@ export default class Client {
 			console.log("Notification permission:", permission)
 			if (evt) {
 				window.alert(`Notification permission: ${permission}`)
+			}
+			if (permission === "granted" && this.rpc instanceof WasmClient) {
+				// Chrome grants persistent storage to origins with notification permission.
+				this.rpc.requestPersistentStorage().catch(err => console.warn("Persistent storage request failed", err))
 			}
 		})
 	}
@@ -728,7 +763,12 @@ export default class Client {
 	}
 
 	async logout() {
-		await this.rpc.logout()
+		this.#loggingOut = true
+		try {
+			await this.rpc.logout()
+		} finally {
+			this.#loggingOut = false
+		}
 		this.clearState()
 		localStorage.clear()
 		// The cached room list belongs to the account that just logged out.
