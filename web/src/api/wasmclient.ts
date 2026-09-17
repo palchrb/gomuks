@@ -99,6 +99,21 @@ export default class WasmClient extends RPCClient {
 		// second tab would fail inside SQLite with an unhelpful error. Take a
 		// Web Lock before creating the worker (which installs the pool
 		// immediately) and explain the situation instead.
+		// The database lives in the origin private file system. Firefox private
+		// windows (and some restrictive browser settings) don't provide it, and
+		// SQLite's error for that is unhelpful, so check up front.
+		try {
+			await navigator.storage.getDirectory()
+		} catch (err) {
+			console.error("Origin private file system unavailable", err)
+			this.connect.emit({
+				connected: false,
+				reconnecting: false,
+				error: "This browser window doesn't allow persistent storage (private browsing?)."
+					+ " gomuks keeps its database in the browser and needs it: open this page in a normal window.",
+			})
+			return
+		}
 		if (!await this.#acquireLock()) {
 			this.connect.emit({
 				connected: false,

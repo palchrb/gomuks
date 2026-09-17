@@ -152,12 +152,18 @@ async function loadPickleKey(): Promise<Uint8Array> {
 	})
 })().catch(err => {
 	console.error("Fatal error in wasm worker:", err)
+	let error = `${err}`
+	if (/GetDirectory|SecurityError|OPFS|SAH pool/i.test(error)) {
+		error = "The browser refused access to its origin private file system, which gomuks needs for its"
+			+ " database. This happens in private windows and when another tab already holds the database."
+			+ ` (${error})`
+	}
 	self.postMessage({
 		command: "wasm-connection",
 		data: {
 			connected: false,
 			reconnecting: false,
-			error: `${err}`,
+			error,
 		},
 	})
 })

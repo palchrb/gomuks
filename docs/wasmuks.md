@@ -184,6 +184,9 @@ Not done, kept as options:
 
 ## Limitations compared to the server build
 
+* **No private browsing in Firefox.** Firefox private windows don't provide
+  the origin private file system the database lives in; Chrome's incognito
+  does, but wipes it when the window closes.
 * **One tab at a time.** The database can only be opened by one worker; a second
   tab shows a message asking to close the first one.
 * **No push notifications and no sync while the tab is closed.** Use a native
