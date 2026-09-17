@@ -26,6 +26,8 @@ import (
 	"html"
 	"image"
 	"image/color"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"mime"
 	"net/http"
@@ -534,7 +536,13 @@ func BytesPerPixel(cm color.Model) int {
 	}
 }
 
-func decodeImageWithOrientationFix(file *os.File, maxDecodeMemory int) (image.Image, error) {
+// readSeekerAt is satisfied by *os.File and *bytes.Reader.
+type readSeekerAt interface {
+	io.ReadSeeker
+	io.ReaderAt
+}
+
+func decodeImageWithOrientationFix(file readSeekerAt, maxDecodeMemory int) (image.Image, error) {
 	cfg, decodedFrom, err := image.DecodeConfig(file)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode image config: %w", err)
@@ -599,6 +607,33 @@ var parseHEICEXIF = func(data io.ReaderAt) ([]byte, error) {
 }
 
 const maxAvatarDecodeMemory = 128 * 1024 * 1024
+
+// MakeAvatarThumbnail decodes an image and returns a square thumbnail of the
+// given size, entirely in memory. It prefers webp when a webp encoder is
+// compiled in (cgo builds) and otherwise falls back to PNG for images with
+// transparency and JPEG for everything else.
+func MakeAvatarThumbnail(data []byte, size int) (thumbnail []byte, mimeType string, err error) {
+	img, err := decodeImageWithOrientationFix(bytes.NewReader(data), maxAvatarDecodeMemory)
+	if err != nil {
+		return nil, "", err
+	}
+	thumbnailImage := imaging.Thumbnail(img, size, size, imaging.Lanczos)
+	var buf bytes.Buffer
+	if err = encodeAvatarThumbnail(&buf, thumbnailImage); err == nil {
+		return buf.Bytes(), "image/webp", nil
+	}
+	buf.Reset()
+	if !thumbnailImage.Opaque() {
+		if err = png.Encode(&buf, thumbnailImage); err != nil {
+			return nil, "", fmt.Errorf("failed to encode png thumbnail: %w", err)
+		}
+		return buf.Bytes(), "image/png", nil
+	}
+	if err = jpeg.Encode(&buf, thumbnailImage, &jpeg.Options{Quality: 80}); err != nil {
+		return nil, "", fmt.Errorf("failed to encode jpeg thumbnail: %w", err)
+	}
+	return buf.Bytes(), "image/jpeg", nil
+}
 
 func (gmx *Gomuks) generateAvatarThumbnail(entry *database.Media, size int) error {
 	cacheFile, err := os.Open(gmx.CacheEntryToPath(entry.Hash))

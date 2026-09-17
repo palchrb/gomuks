@@ -20,6 +20,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -119,9 +120,6 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 		log.Error().Msg("Tried to download encrypted media without encrypted flag")
 		return
 	}
-	if useThumbnail {
-		// TODO implement
-	}
 	resp, err := gmx.Client.Client.Download(mautrix.WithMaxRetries(ctx, 0), mxc)
 	if err != nil {
 		log.Err(err).Msg("Failed to download media")
@@ -146,6 +144,16 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 	contentDisposition := resp.Header.Get("Content-Disposition")
 	if cacheEntry != nil && cacheEntry.MimeType != "" {
 		contentType = cacheEntry.MimeType
+	}
+	if useThumbnail && strings.HasPrefix(contentType, "image/") {
+		thumbnail, thumbnailType, err := gomuks.MakeAvatarThumbnail(data, cmp.Or(gmx.Config.Media.ThumbnailSize, 120))
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to generate avatar thumbnail, serving full image")
+		} else {
+			data = thumbnail
+			contentType = thumbnailType
+			contentDisposition = ""
+		}
 	}
 	buf := js.Global().Get("Uint8Array").New(len(data))
 	js.CopyBytesToJS(buf, data)

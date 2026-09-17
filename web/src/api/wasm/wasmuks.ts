@@ -37,6 +37,17 @@ declare global {
 	}
 }
 
+// Cache key for a media URL: the path plus the thumbnail parameter, so the
+// thumbnail and the full image are separate entries but other parameters
+// (encryption flag, fallback avatar text) don't cause duplicates. Must match
+// mediaCacheKey in public/wasmuks-media-sw.js.
+export function mediaCacheKey(url: URL): string {
+	const key = new URL(url.href)
+	const thumbnail = key.searchParams.get("thumbnail")
+	key.search = thumbnail ? `?thumbnail=${encodeURIComponent(thumbnail)}` : ""
+	return key.href
+}
+
 async function setupMediaChannel() {
 	const bc = new BroadcastChannel("wasmuks-media-download")
 	const cache = await caches.open("wasmuks-media-v1")
@@ -45,6 +56,7 @@ async function setupMediaChannel() {
 			return
 		}
 		const parsedURL = new URL(evt.data.url)
+		const cacheKey = mediaCacheKey(parsedURL)
 		try {
 			const result = await new Promise<MediaResponse>((resolve, reject) => {
 				self.meowDownloadMedia(parsedURL.pathname, parsedURL.search, { resolve, reject })
@@ -55,11 +67,11 @@ async function setupMediaChannel() {
 			if (result.contentDisposition) {
 				headers["Content-Disposition"] = result.contentDisposition
 			}
-			await cache.put(parsedURL, new Response(result.buffer, { status: 200, headers }))
+			await cache.put(cacheKey, new Response(result.buffer, { status: 200, headers }))
 			bc.postMessage({ type: "response", url: evt.data.url })
 		} catch (err) {
 			console.error("Error handling media download request:", err)
-			await cache.put(parsedURL, new Response("Failed to download", { status: 500 }))
+			await cache.put(cacheKey, new Response("Failed to download", { status: 500 }))
 			bc.postMessage({ type: "response", url: evt.data.url, failed: true })
 		}
 	})

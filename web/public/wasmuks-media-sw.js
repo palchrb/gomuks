@@ -70,12 +70,21 @@ async function requestAndWaitForMedia(url) {
 	return promise
 }
 
+// Must match mediaCacheKey in src/api/wasm/wasmuks.ts.
+function mediaCacheKey(url) {
+	const key = new URL(url)
+	const thumbnail = key.searchParams.get("thumbnail")
+	key.search = thumbnail ? `?thumbnail=${encodeURIComponent(thumbnail)}` : ""
+	return key.href
+}
+
 async function serveFromCache(request) {
 	const cache = await mediaCache
-	let hit = await cache.match(request, {ignoreSearch: true})
+	const cacheKey = mediaCacheKey(request.url)
+	let hit = await cache.match(cacheKey)
 	if (!hit) {
 		await requestAndWaitForMedia(request.url)
-		hit = await cache.match(request, {ignoreSearch: true})
+		hit = await cache.match(cacheKey)
 		if (!hit) {
 			console.log("Cache entry not found after request for", request.url)
 			return new Response("Cache entry not found", {status: 404})
