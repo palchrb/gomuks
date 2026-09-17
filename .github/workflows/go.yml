@@ -40,3 +40,41 @@ jobs:
 
       - name: Test
         run: go test -tags sqlite_fts5 -v ./...
+
+  wasm:
+    runs-on: ubuntu-latest
+    name: Build and smoke test wasm
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Vet and test the wasm driver
+        run: |
+          go test -v ./pkg/sqlite-wasm-js/
+          GOOS=js GOARCH=wasm go vet -tags "goolm sqlite_fts5" ./pkg/sqlite-wasm-js/ ./cmd/wasmuks/
+
+      - name: Build wasm and frontend
+        run: |
+          cd web
+          go run ../pkg/hicli/cmdspec/print src/api/types/stdcommands.json src/api/types/stdcommands.d.ts
+          ./build-wasm.sh
+          npm ci --include=dev
+          npm run build
+
+      - name: Smoke test in headless Chromium
+        run: |
+          cd pkg/sqlite-wasm-js/bench
+          npm install
+          npx playwright install --with-deps chromium
+          node smoke.mjs

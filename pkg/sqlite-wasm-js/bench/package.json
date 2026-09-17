@@ -10,6 +10,6 @@
 	"devDependencies": {
 		"@sqlite.org/sqlite-wasm": "3.53.0-build1",
 		"esbuild": "^0.28.2",
-		"playwright-core": "^1.55.0"
+		"playwright": "^1.55.0"
 	}
 }

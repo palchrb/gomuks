@@ -26,8 +26,8 @@ node run.js 2000                                  # all variants, n=2000
 node run.js 10000 "current,current+exclusive+persist"   # subset
 ```
 
-`run.js` looks for Playwright's Chromium via `PLAYWRIGHT_BROWSERS_PATH` or the
-`CHROMIUM_PATH` environment variable.
+Chromium comes from Playwright (`npx playwright install chromium`); set
+`CHROMIUM_PATH` to use another Chromium binary instead.
 
 ## Reference numbers
 
