@@ -1,0 +1,7 @@
+web/node_modules
+web/dist
+web/src/api/wasm/_gomuks.wasm
+pkg/sqlite-wasm-js/bench/node_modules
+pkg/sqlite-wasm-js/bench/bench.wasm
+desktop/node_modules
+config.json

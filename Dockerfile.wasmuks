@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+# Builds gomuks web with the embedded wasm backend and packages it as a
+# static site served by nginx. See docs/wasmuks.md.
+#
+# The build needs a few GB of RAM (Go links a 30 MB wasm binary and vite
+# bundles the frontend). Build it on a PC or in CI, not on a Raspberry Pi;
+# the resulting image is tiny and runs anywhere.
+ARG GO_VERSION=1.27
+ARG NODE_VERSION=24
+
+# --platform=$BUILDPLATFORM: the wasm binary and the JS bundle are the same
+# for every target architecture, so build them natively instead of under
+# QEMU emulation when producing arm64 images.
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS wasm
+RUN apk add --no-cache git
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN cd web \
+	&& go run ../pkg/hicli/cmdspec/print src/api/types/stdcommands.json src/api/types/stdcommands.d.ts \
+	&& ./build-wasm.sh
+
+FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-alpine AS web
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --include=dev
+COPY web/ ./
+COPY --from=wasm /src/web/src/api/wasm/_gomuks.wasm src/api/wasm/_gomuks.wasm
+COPY --from=wasm /src/web/src/api/types/stdcommands.json /src/web/src/api/types/stdcommands.d.ts src/api/types/
+RUN npm run build \
+	&& find dist -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.svg' \) \
+		-exec gzip -9 -k {} +
+
+FROM nginx:1.27-alpine
+COPY docker/nginx-wasmuks.conf /etc/nginx/conf.d/default.conf
+COPY --from=web /src/web/dist /usr/share/nginx/html
+EXPOSE 80

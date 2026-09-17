@@ -1,0 +1,11 @@
+{
+	"preferences": {
+		"show_membership_events": false,
+		"show_hidden_events": false
+	},
+	"wasm": {
+		"single_connection": true,
+		"memory_limit_mb": 512,
+		"initial_timeline_limit": 20
+	}
+}
