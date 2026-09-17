@@ -1,0 +1,13 @@
+{
+	"name": "sqlite-wasm-js-bench",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "sh ./build.sh",
+		"bench": "node run.js"
+	},
+	"devDependencies": {
+		"@sqlite.org/sqlite-wasm": "3.53.0-build1",
+		"playwright-core": "^1.55.0"
+	}
+}

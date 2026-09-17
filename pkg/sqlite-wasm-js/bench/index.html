@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>sqlite-wasm-js bench</title></head>
+<body>
+<pre id="out">starting…</pre>
+<script type="module">
+const sp = new URL(location.href).searchParams
+const w = new Worker(`./worker.js?n=${sp.get("n") ?? "2000"}&v=${encodeURIComponent(sp.get("v") ?? "")}`, { type: "module" })
+w.addEventListener("message", evt => {
+	if (evt.data.type === "result") {
+		window.benchResult = evt.data.result
+		document.getElementById("out").textContent = JSON.stringify(evt.data.result, null, 2)
+	} else if (evt.data.type === "error") {
+		window.benchError = evt.data.error
+		document.getElementById("out").textContent = "ERROR: " + evt.data.error
+	} else {
+		console.log(evt.data.msg)
+	}
+})
+w.addEventListener("error", evt => { window.benchError = String(evt.message) })
+</script>
+</body></html>

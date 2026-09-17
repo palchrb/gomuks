@@ -1,0 +1,4 @@
+node_modules/
+bench.wasm
+wasm_exec.js
+package-lock.json
