@@ -49,7 +49,7 @@ export function getPreferenceProxy(store: StateStore, room?: RoomStateStore): Re
 				} else if (ctx === PreferenceContext.RoomDevice && room) {
 					val = room.localPreferenceCache?.[key]
 				} else if (ctx === PreferenceContext.Config) {
-					// TODO
+					val = store.configPreferenceCache?.[key]
 				}
 				if (val !== undefined) {
 					return val

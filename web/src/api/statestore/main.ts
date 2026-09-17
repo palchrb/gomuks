@@ -14,7 +14,9 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import { getAvatarThumbnailURL } from "@/api/media.ts"
-import { Preferences, getLocalStoragePreferences, getPreferenceProxy } from "@/api/types/preferences"
+import {
+	PreferenceValueType, Preferences, getLocalStoragePreferences, getPreferenceProxy, isValidPreferenceKey, preferences,
+} from "@/api/types/preferences"
 import { CustomEmojiPack } from "@/util/emoji"
 import { NonNullCachedEventDispatcher } from "@/util/eventdispatcher.ts"
 import { focused } from "@/util/focus.ts"
@@ -160,6 +162,11 @@ export class StateStore {
 	readonly preferenceSub = new NoDataSubscribable()
 	readonly localPreferenceCache: Preferences = getLocalStoragePreferences("global_prefs", this.preferenceSub.notify)
 	serverPreferenceCache: Preferences = {}
+	// Defaults set by whoever hosts the frontend, loaded from config.json
+	// next to index.html. Lowest priority, users can override everything.
+	configPreferenceCache: Preferences = {}
+	readonly configPreferencesLoaded: Promise<void> = this.loadConfigPreferences()
+		.catch(err => console.warn("Failed to load config.json preferences", err))
 	switchRoom?: (roomID: RoomID | null) => void
 	#activeRoomID: RoomID | null = null
 	activeRoomIsPreview: boolean = false
@@ -197,6 +204,39 @@ export class StateStore {
 		this.stateCache = undefined
 		this.tmpStateCache = undefined
 		this.stateCacheStatus = "closed"
+	}
+
+	async loadConfigPreferences() {
+		let resp: Response
+		try {
+			resp = await fetch("config.json", { cache: "no-cache" })
+		} catch {
+			return
+		}
+		if (!resp.ok) {
+			return
+		}
+		const config = await resp.json() as { preferences?: Record<string, unknown> }
+		const configPrefs = config?.preferences
+		if (!configPrefs || typeof configPrefs !== "object") {
+			return
+		}
+		const filtered: Record<string, PreferenceValueType> = {}
+		for (const [key, value] of Object.entries(configPrefs)) {
+			if (!isValidPreferenceKey(key)) {
+				console.warn("Ignoring unknown preference in config.json:", key)
+				continue
+			}
+			const def = preferences[key].defaultValue
+			if (typeof value !== typeof def || Array.isArray(value) !== Array.isArray(def)) {
+				console.warn("Ignoring config.json preference with wrong type:", key, value)
+				continue
+			}
+			filtered[key] = value as PreferenceValueType
+		}
+		console.info("Loaded", Object.keys(filtered).length, "preference defaults from config.json")
+		this.configPreferenceCache = filtered as Preferences
+		this.preferenceSub.notify()
 	}
 
 	deleteCache() {

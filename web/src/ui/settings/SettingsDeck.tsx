@@ -141,6 +141,7 @@ const customUIPrefs = new Set([
 const PreferenceRow = ({
 	name, pref, setPref, globalServer, globalLocal, roomServer, roomLocal, hideRoom,
 }: PreferenceRowProps) => {
+	const client = use(ClientContext)!
 	const prefType = typeof pref.defaultValue
 	if (customUIPrefs.has(name)) {
 		return null
@@ -193,10 +194,11 @@ const PreferenceRow = ({
 			return <div className="empty-cell" />
 		}
 	}
-	let inherit: PreferenceValueType
+	// Defaults from config.json (set by whoever hosts the frontend) sit below the account level.
+	let inherit: PreferenceValueType = client.store.configPreferenceCache[name] ?? pref.defaultValue
 	return <>
 		<div className="name" title={pref.description}>{pref.displayName}</div>
-		{makeContentCell(PreferenceContext.Account, globalServer, inherit = pref.defaultValue)}
+		{makeContentCell(PreferenceContext.Account, globalServer, inherit)}
 		{makeContentCell(PreferenceContext.Device, globalLocal, inherit = globalServer ?? inherit)}
 		{!hideRoom ? <>
 			{makeContentCell(PreferenceContext.RoomAccount, roomServer, inherit = globalLocal ?? inherit)}

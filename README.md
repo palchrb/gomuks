@@ -13,7 +13,8 @@ which acts more like a bouncer.
 * gomuks web is the most mature frontend and is ready for daily use. The web
   frontend also has various wrappers, like an Electron-based desktop app and
   a [GeckoView-based Android app](https://github.com/gomuks/android). There's
-  also a version with an embedded backend in wasm.
+  also a version with an embedded backend in wasm, which can be hosted as a
+  static site (see [docs/wasmuks.md](docs/wasmuks.md)).
 * gomuks terminal is a port of legacy gomuks, but it's still experimental and
   doesn't have many features beyond basic chatting. A version with the backend
   embedded is planned, but doesn't exist yet ([#662](https://github.com/gomuks/gomuks/issues/662)).
