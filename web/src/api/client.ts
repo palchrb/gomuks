@@ -771,7 +771,11 @@ export default class Client {
 		}
 		this.clearState()
 		localStorage.clear()
-		// The cached room list belongs to the account that just logged out.
-		await this.store.deleteCache().catch(err => console.warn("Failed to delete state cache", err))
+		if (this.rpc instanceof WasmClient) {
+			// The cached room list belongs to the account that just logged out.
+			// Not awaited: deleting the IndexedDB database blocks while another
+			// tab has it open, and the logout itself is already done.
+			this.store.deleteCache().catch(err => console.warn("Failed to delete state cache", err))
+		}
 	}
 }

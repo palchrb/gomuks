@@ -520,7 +520,7 @@ func (h *HiClient) PaginateServer(ctx context.Context, roomID id.RoomID, limit i
 	if total := time.Since(fetchStart); total > 500*time.Millisecond {
 		// Split so it's visible whether the homeserver, the lock or local
 		// processing (decrypt + database) is the slow part.
-		zerolog.Ctx(ctx).Info().
+		zerolog.Ctx(ctx).WithLevel(SlowOperationLogLevel).
 			Dur("total", total).
 			Dur("fetch", fetchDuration).
 			Dur("lock_wait", lockWait).

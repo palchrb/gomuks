@@ -354,7 +354,9 @@ var (
 	// This is only available in the C FFI. HTTP clients must use the /keys/export API.
 	ExportKeys = &CommandSpec[*ExportKeysParams, string]{Name: ReqExportKeys}
 	// RestoreKeyBackup fetches megolm room keys from the server-side key backup and stores them locally.
-	// Progress is reported with `key_backup_restore_progress` events; the response contains the final progress.
+	// Progress is reported with `key_backup_restore_progress` events carrying the request ID; the response
+	// contains the final progress. Only available in the wasm build; the server exposes the same operation
+	// as an HTTP endpoint (`/_gomuks/keys/restorebackup`).
 	RestoreKeyBackup = &CommandSpec[*RestoreKeyBackupParams, *KeyBackupRestoreProgress]{Name: ReqRestoreKeyBackup}
 )
 

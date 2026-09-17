@@ -99,34 +99,87 @@ function kvGet(db: IDBDatabase, key: string): Promise<unknown> {
 	})
 }
 
-function kvPut(db: IDBDatabase, key: string, value: unknown): Promise<void> {
+const PICKLE_KEY_FILE = "pickle.key"
+
+// The key lives in OPFS next to the database (outside the SAH pool's own
+// directory, so PoolUtil.wipeFiles() on logout doesn't remove it), so the
+// two are always evicted or cleared together. Older installs kept it in
+// IndexedDB; that copy is migrated on first start.
+async function readOPFSFile(name: string): Promise<Uint8Array | null> {
+	const root = await navigator.storage.getDirectory()
+	try {
+		const handle = await root.getFileHandle(name)
+		return new Uint8Array(await (await handle.getFile()).arrayBuffer())
+	} catch {
+		return null
+	}
+}
+
+// Only in the worker lib types, which this project doesn't include.
+interface SyncAccessHandle {
+	truncate(size: number): void
+	write(buffer: Uint8Array, options?: { at?: number }): number
+	flush(): void
+	close(): void
+}
+
+async function writeOPFSFile(name: string, data: Uint8Array): Promise<void> {
+	const root = await navigator.storage.getDirectory()
+	const handle = await root.getFileHandle(name, { create: true })
+	// Sync access handles work in every browser's workers; createWritable doesn't in Safari.
+	const access = await (handle as unknown as { createSyncAccessHandle(): Promise<SyncAccessHandle> })
+		.createSyncAccessHandle()
+	try {
+		access.truncate(0)
+		access.write(data, { at: 0 })
+		access.flush()
+	} finally {
+		access.close()
+	}
+}
+
+async function kvDelete(db: IDBDatabase, key: string): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const txn = db.transaction(KV_STORE, "readwrite")
-		txn.objectStore(KV_STORE).put(value, key)
+		txn.objectStore(KV_STORE).delete(key)
 		txn.oncomplete = () => resolve()
 		txn.onerror = () => reject(txn.error)
 	})
 }
 
 // The olm/megolm state in the database is pickled with a key. Use a random
-// per-installation key stored in IndexedDB instead of a constant. Databases
-// created before this existed were pickled with "meow"; keep using that for
-// them, since mautrix has no way to re-pickle.
+// per-installation key instead of a constant. Databases created before this
+// existed were pickled with "meow"; keep using that for them, since mautrix
+// has no way to re-pickle.
 async function loadPickleKey(): Promise<Uint8Array> {
-	const db = await openKV()
-	try {
-		const existing = await kvGet(db, PICKLE_KEY)
-		if (existing instanceof Uint8Array && existing.length > 0) {
-			return existing
-		}
-		const legacyDB = self.sqlite3.PoolUtil?.getFileNames().includes("/gomuks.db")
-		const key = legacyDB ? new TextEncoder().encode("meow") : crypto.getRandomValues(new Uint8Array(32))
-		await kvPut(db, PICKLE_KEY, key)
-		console.info(legacyDB ? "Using legacy pickle key for existing database" : "Generated new pickle key")
-		return key
-	} finally {
-		db.close()
+	const existing = await readOPFSFile(PICKLE_KEY_FILE)
+	if (existing && existing.length > 0) {
+		return existing
 	}
+	let key: Uint8Array | null = null
+	try {
+		const db = await openKV()
+		try {
+			const legacy = await kvGet(db, PICKLE_KEY)
+			if (legacy instanceof Uint8Array && legacy.length > 0) {
+				key = legacy
+				await writeOPFSFile(PICKLE_KEY_FILE, key)
+				await kvDelete(db, PICKLE_KEY)
+				console.info("Moved pickle key from IndexedDB to OPFS")
+			}
+		} finally {
+			db.close()
+		}
+	} catch (err) {
+		console.warn("Failed to check IndexedDB for a legacy pickle key", err)
+	}
+	if (!key) {
+		const legacyDB = self.sqlite3.PoolUtil?.getFileNames().includes("/gomuks.db")
+		key = legacyDB ? new TextEncoder().encode("meow") : crypto.getRandomValues(new Uint8Array(32))
+		await writeOPFSFile(PICKLE_KEY_FILE, key)
+		console.info(legacyDB ? "Using legacy pickle key for existing database" : "Generated new pickle key")
+	}
+	return key
 }
 
 ;(async () => {

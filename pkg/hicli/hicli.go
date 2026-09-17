@@ -152,6 +152,11 @@ var (
 
 var ErrTimelineReset = errors.New("got limited timeline sync response")
 
+// SlowOperationLogLevel is the level used for "this took long" log lines
+// (slow commands, sync processing, pagination). The wasm build raises it to
+// info so the numbers are visible in the browser console.
+var SlowOperationLogLevel = zerolog.DebugLevel
+
 func prepareRawDB(rawDB, cryptoDB *dbutil.Database, log zerolog.Logger) *dbutil.Database {
 	if cryptoDB == nil {
 		cryptoDB = rawDB

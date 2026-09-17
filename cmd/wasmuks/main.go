@@ -91,7 +91,7 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 		// progress goes out as events and the final state as the response.
 		go func() {
 			ctx := gmx.Log.With().Str("action", "restore key backup").Logger().WithContext(context.Background())
-			resp, err := jsoncmd.RestoreKeyBackup.RunCtx(ctx, wrappedCmd.Data, restoreKeyBackup)
+			resp, err := jsoncmd.RestoreKeyBackup.RunCtx(ctx, wrappedCmd.Data, restoreKeyBackup(wrappedCmd.RequestID))
 			if err != nil {
 				postMessage(jsoncmd.RespError, wrappedCmd.RequestID, ptr.Ptr(gomuks.ToRespError(err)))
 			} else {
@@ -107,17 +107,20 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 	return nil
 }
 
-func restoreKeyBackup(ctx context.Context, params *jsoncmd.RestoreKeyBackupParams) (*jsoncmd.KeyBackupRestoreProgress, error) {
-	var last jsoncmd.KeyBackupRestoreProgress
-	err := gmx.Client.RestoreKeyBackup(ctx, params.RoomID, func(progress jsoncmd.KeyBackupRestoreProgress) {
-		last = progress
-		postMessage(jsoncmd.EventKeyBackupRestoreProgress, 0, &progress)
-	})
-	if err != nil {
-		return nil, err
+func restoreKeyBackup(reqID int64) func(context.Context, *jsoncmd.RestoreKeyBackupParams) (*jsoncmd.KeyBackupRestoreProgress, error) {
+	return func(ctx context.Context, params *jsoncmd.RestoreKeyBackupParams) (*jsoncmd.KeyBackupRestoreProgress, error) {
+		var last jsoncmd.KeyBackupRestoreProgress
+		err := gmx.Client.RestoreKeyBackup(ctx, params.RoomID, func(progress jsoncmd.KeyBackupRestoreProgress) {
+			last = progress
+			// Tagged with the request ID so the frontend can tell restores apart.
+			postMessage(jsoncmd.EventKeyBackupRestoreProgress, reqID, &progress)
+		})
+		if err != nil {
+			return nil, err
+		}
+		last.Stage = "done"
+		return &last, nil
 	}
-	last.Stage = "done"
-	return &last, nil
 }
 
 // runMigrations runs schema migrations on a throwaway multi-connection pool
@@ -127,9 +130,6 @@ func restoreKeyBackup(ctx context.Context, params *jsoncmd.RestoreKeyBackupParam
 // Leaked connections on this pool are idle and hold no locks, so they are
 // harmless once the pool is closed.
 func runMigrations() error {
-	if err := gmx.InitClient(); err != nil {
-		return err
-	}
 	log := gmx.Log.With().Str("component", "migrations").Logger()
 	rawDB, err := dbutil.NewFromConfig("gomuks", dbutil.Config{
 		PoolConfig: dbutil.PoolConfig{
@@ -142,10 +142,15 @@ func runMigrations() error {
 	if err != nil {
 		return fmt.Errorf("failed to open migration pool: %w", err)
 	}
-	defer func() {
-		_ = rawDB.Close()
-	}()
-	return hicli.UpgradeDatabases(log.WithContext(context.Background()), rawDB, nil, log, gmx.PickleKey())
+	err = hicli.UpgradeDatabases(log.WithContext(context.Background()), rawDB, nil, log, gmx.PickleKey())
+	if closeErr := rawDB.Close(); closeErr != nil {
+		log.Warn().Err(closeErr).Msg("Failed to close migration pool")
+	}
+	if err != nil {
+		return err
+	}
+	// Only now open the real (single-connection, EXCLUSIVE) pool.
+	return gmx.InitClient()
 }
 
 // wasmuksInit mirrors WasmuksInit in web/src/api/wasmclient.ts. It's passed
@@ -261,6 +266,8 @@ func removeData(ctx context.Context, _ *hicli.HiClient) error {
 
 func main() {
 	hicli.InitialDeviceDisplayName = "gomuks web"
+	// Timing lines are the main diagnostic in a browser, so keep them visible.
+	hicli.SlowOperationLogLevel = zerolog.InfoLevel
 	gmx = gomuks.NewGomuks()
 	gmx.Config = gomuks.Config{
 		Logging: zeroconfig.Config{
