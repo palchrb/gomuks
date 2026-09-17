@@ -4,7 +4,8 @@
 	"type": "module",
 	"scripts": {
 		"build": "sh ./build.sh",
-		"bench": "node run.js"
+		"bench": "node run.js",
+		"smoke": "node smoke.mjs"
 	},
 	"devDependencies": {
 		"@sqlite.org/sqlite-wasm": "3.53.0-build1",

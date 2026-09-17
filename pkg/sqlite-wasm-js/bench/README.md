@@ -28,3 +28,14 @@ node run.js 10000 "current,current+exclusive+persist"   # subset
 
 `run.js` looks for Playwright's Chromium via `PLAYWRIGHT_BROWSERS_PATH` or the
 `CHROMIUM_PATH` environment variable.
+
+## Startup smoke test
+
+`smoke.mjs` serves a built `web/dist` in headless Chromium and checks that the
+wasm backend initializes, the login screen renders, `config.json` defaults are
+applied, and a second tab is refused by the Web Lock:
+
+```sh
+cd web && ./build-wasm.sh && npm run build && cd ../pkg/sqlite-wasm-js/bench
+CHROMIUM_PATH=/path/to/chrome node smoke.mjs
+```
