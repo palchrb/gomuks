@@ -26,6 +26,7 @@ interface MediaResponse {
 
 declare global {
 	interface Window {
+		wasmuksPickleKey: Uint8Array
 		meowDownloadMedia: (
 			path: string,
 			query: string,
@@ -77,9 +78,61 @@ async function setupMediaChannel() {
 	})
 }
 
+const KV_DB_NAME = "gomuks-wasm"
+const KV_STORE = "kv"
+const PICKLE_KEY = "pickle_key"
+
+function openKV(): Promise<IDBDatabase> {
+	return new Promise((resolve, reject) => {
+		const req = indexedDB.open(KV_DB_NAME, 1)
+		req.onupgradeneeded = () => req.result.createObjectStore(KV_STORE)
+		req.onsuccess = () => resolve(req.result)
+		req.onerror = () => reject(req.error)
+	})
+}
+
+function kvGet(db: IDBDatabase, key: string): Promise<unknown> {
+	return new Promise((resolve, reject) => {
+		const req = db.transaction(KV_STORE, "readonly").objectStore(KV_STORE).get(key)
+		req.onsuccess = () => resolve(req.result)
+		req.onerror = () => reject(req.error)
+	})
+}
+
+function kvPut(db: IDBDatabase, key: string, value: unknown): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const txn = db.transaction(KV_STORE, "readwrite")
+		txn.objectStore(KV_STORE).put(value, key)
+		txn.oncomplete = () => resolve()
+		txn.onerror = () => reject(txn.error)
+	})
+}
+
+// The olm/megolm state in the database is pickled with a key. Use a random
+// per-installation key stored in IndexedDB instead of a constant. Databases
+// created before this existed were pickled with "meow"; keep using that for
+// them, since mautrix has no way to re-pickle.
+async function loadPickleKey(): Promise<Uint8Array> {
+	const db = await openKV()
+	try {
+		const existing = await kvGet(db, PICKLE_KEY)
+		if (existing instanceof Uint8Array && existing.length > 0) {
+			return existing
+		}
+		const legacyDB = self.sqlite3.PoolUtil?.getFileNames().includes("/gomuks.db")
+		const key = legacyDB ? new TextEncoder().encode("meow") : crypto.getRandomValues(new Uint8Array(32))
+		await kvPut(db, PICKLE_KEY, key)
+		console.info(legacyDB ? "Using legacy pickle key for existing database" : "Generated new pickle key")
+		return key
+	} finally {
+		db.close()
+	}
+}
+
 ;(async () => {
 	const go = new Go()
 	await initSqlite()
+	self.wasmuksPickleKey = await loadPickleKey()
 	const instance = await initGomuksWasm(go.importObject)
 	await setupMediaChannel()
 	await go.run(instance)

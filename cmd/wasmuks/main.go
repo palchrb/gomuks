@@ -228,6 +228,14 @@ func main() {
 		Str("go_version", runtime.Version()).
 		Time("built_at", version.Gomuks.BuildTime).
 		Msg("Initializing gomuks in wasm")
+	// The worker generates a random pickle key per installation and stores it
+	// in IndexedDB (see wasmuks.ts); it's exposed as a global before Go starts.
+	if key := js.Global().Get("wasmuksPickleKey"); key.Type() == js.TypeObject && key.Length() > 0 {
+		gmx.PickleKeyOverride = make([]byte, key.Length())
+		js.CopyBytesToGo(gmx.PickleKeyOverride, key)
+	} else {
+		gmx.Log.Warn().Msg("No pickle key provided by worker, using default")
+	}
 	if err := runMigrations(); err != nil {
 		gmx.Log.WithLevel(zerolog.FatalLevel).Err(err).Msg("Failed to run database migrations")
 		postMessage("wasm-connection", 0, json.RawMessage(`{"connected":false,"reconnecting":false,"error":"Database migration failed"}`))

@@ -79,6 +79,10 @@ type Gomuks struct {
 
 	EventBuffer *EventBuffer
 
+	// PickleKeyOverride replaces the default pickle key for the crypto store.
+	// It must be set before the client is initialized and never changed for
+	// an existing database.
+	PickleKeyOverride []byte
 	// RemoveDataFunc replaces the filesystem-based data removal in Logout
 	// for environments that store data elsewhere (the wasm build uses OPFS).
 	// The client passed in has already been stopped and its database closed.
@@ -206,6 +210,9 @@ func (gmx *Gomuks) InitClient() error {
 
 // PickleKey returns the key used to pickle olm/megolm state in the crypto store.
 func (gmx *Gomuks) PickleKey() []byte {
+	if len(gmx.PickleKeyOverride) > 0 {
+		return gmx.PickleKeyOverride
+	}
 	return []byte("meow")
 }
 
