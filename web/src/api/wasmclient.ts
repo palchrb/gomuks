@@ -93,6 +93,10 @@ export default class WasmClient extends RPCClient {
 	protected isConnected = true
 	#worker?: Worker
 	#releaseLock?: () => void
+	// Commands sent before the worker has started (e.g. triggered by the
+	// room list restored from IndexedDB) wait here until Go reports ready.
+	#ready = false
+	#pending: object[] = []
 
 	async start() {
 		// The OPFS SAH pool gives exclusive file handles to one worker, so a
@@ -216,6 +220,14 @@ export default class WasmClient extends RPCClient {
 		}
 		// console.debug("[RPC] Go -> JS", realEvtData)
 		if (realEvtData.command === "wasm-connection") {
+			this.#ready = realEvtData.data.connected
+			if (this.#ready) {
+				const queued = this.#pending
+				this.#pending = []
+				for (const payload of queued) {
+					this.#worker?.postMessage(payload)
+				}
+			}
 			this.connect.emit(realEvtData.data)
 		} else {
 			this.onCommand(realEvtData)
@@ -225,18 +237,21 @@ export default class WasmClient extends RPCClient {
 	async stop() {
 		this.#worker?.terminate()
 		this.#worker = undefined
+		this.#ready = false
+		this.#pending = []
 		this.#releaseLock?.()
 		this.#releaseLock = undefined
 	}
 
 	protected send(data: RPCCommand) {
-		if (!this.#worker) {
-			throw new Error("Worker not initialized")
-		}
 		const payload = {
 			command: data.command ?? "",
 			request_id: data.request_id ?? 0,
 			data: JSON.stringify(data.data ?? {}),
+		}
+		if (!this.#worker || !this.#ready) {
+			this.#pending.push(payload)
+			return
 		}
 		// console.debug("[RPC] JS -> Go", payload)
 		this.#worker.postMessage(payload)
