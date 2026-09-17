@@ -41,7 +41,8 @@ bc.addEventListener("message", evt => {
 })
 
 // If no tab with the wasm worker is open, nobody will ever answer the request.
-const MEDIA_REQUEST_TIMEOUT_MS = 30_000
+// Generous because the homeserver may have to fetch federated media first.
+const MEDIA_REQUEST_TIMEOUT_MS = 90_000
 
 async function requestAndWaitForMedia(url) {
 	if (mediaPromises.has(url)) {
@@ -56,6 +57,8 @@ async function requestAndWaitForMedia(url) {
 		mediaPromises.delete(url)
 		reject(new Error("Timed out waiting for the wasm worker to fetch media"))
 	}, MEDIA_REQUEST_TIMEOUT_MS)
+	// The worker still caches the response when it eventually arrives, so a
+	// reload after a timeout shows the media.
 	mediaPromises.set(url, {resolve: () => {
 		clearTimeout(timeout)
 		resolve()
