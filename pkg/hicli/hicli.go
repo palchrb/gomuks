@@ -64,6 +64,13 @@ type HiClient struct {
 	LogoutFunc   func(context.Context) error
 
 	RemoveFallbacks bool
+	// SingleConnectionDB must be set when the database pool has a single
+	// connection (e.g. the wasm build with EXCLUSIVE locking). It makes the
+	// sync loop take the event decryption lock before opening the sync
+	// transaction, so that goroutines which take the lock first and then need
+	// a connection (pagination, background decryption) can't deadlock with a
+	// sync transaction that holds the only connection and waits for the lock.
+	SingleConnectionDB bool
 
 	firstSyncReceived     bool
 	sendInitSyncToClients bool
@@ -140,7 +147,7 @@ var (
 
 var ErrTimelineReset = errors.New("got limited timeline sync response")
 
-func New(rawDB, cryptoDB *dbutil.Database, log zerolog.Logger, pickleKey []byte, evtHandler func(any)) *HiClient {
+func prepareRawDB(rawDB, cryptoDB *dbutil.Database, log zerolog.Logger) *dbutil.Database {
 	if cryptoDB == nil {
 		cryptoDB = rawDB
 	}
@@ -151,6 +158,32 @@ func New(rawDB, cryptoDB *dbutil.Database, log zerolog.Logger, pickleKey []byte,
 	if rawDB.Log == nil {
 		rawDB.Log = dbutil.ZeroLogger(log.With().Str("db_section", "hicli").Logger())
 	}
+	return cryptoDB
+}
+
+func newCryptoStore(cryptoDB *dbutil.Database, log zerolog.Logger, pickleKey []byte) *crypto.SQLCryptoStore {
+	return crypto.NewSQLCryptoStore(cryptoDB, dbutil.ZeroLogger(log.With().Str("db_section", "crypto").Logger()), "", "", pickleKey)
+}
+
+// UpgradeDatabases runs the hicli and crypto store schema migrations on the
+// given databases without constructing a client. Load does the same thing
+// implicitly; this exists for environments that must run migrations on a
+// separate connection pool (see cmd/wasmuks).
+func UpgradeDatabases(ctx context.Context, rawDB, cryptoDB *dbutil.Database, log zerolog.Logger, pickleKey []byte) error {
+	cryptoDB = prepareRawDB(rawDB, cryptoDB, log)
+	err := database.New(rawDB).Upgrade(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to upgrade hicli db: %w", err)
+	}
+	err = newCryptoStore(cryptoDB, log, pickleKey).DB.Upgrade(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to upgrade crypto db: %w", err)
+	}
+	return nil
+}
+
+func New(rawDB, cryptoDB *dbutil.Database, log zerolog.Logger, pickleKey []byte, evtHandler func(any)) *HiClient {
+	cryptoDB = prepareRawDB(rawDB, cryptoDB, log)
 	db := database.New(rawDB)
 	c := &HiClient{
 		DB:  db,
@@ -203,7 +236,7 @@ func New(rawDB, cryptoDB *dbutil.Database, log zerolog.Logger, pickleKey []byte,
 		DefaultHTTPBackoff: 1 * time.Second,
 		DefaultHTTPRetries: 6,
 	}
-	c.CryptoStore = crypto.NewSQLCryptoStore(cryptoDB, dbutil.ZeroLogger(log.With().Str("db_section", "crypto").Logger()), "", "", pickleKey)
+	c.CryptoStore = newCryptoStore(cryptoDB, log, pickleKey)
 	cryptoLog := log.With().Str("component", "crypto").Logger()
 	c.Crypto = crypto.NewOlmMachine(c.Client, &cryptoLog, c.CryptoStore, c.ClientStore)
 	c.Crypto.SetMegolmDecryptLock(c.withEventDecryptionLock)

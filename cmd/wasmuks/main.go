@@ -21,9 +21,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"runtime"
 	"syscall/js"
 
+	"github.com/rs/zerolog"
 	"go.mau.fi/util/dbutil"
 	"go.mau.fi/util/exbytes"
 	"go.mau.fi/util/exstrings"
@@ -88,6 +90,34 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 	return nil
 }
 
+// runMigrations runs schema migrations on a throwaway multi-connection pool
+// with normal locking. dbutil's sqlite-fkey-off upgrade path never releases
+// the connection it acquires, which with the real single-connection EXCLUSIVE
+// pool would leave the only connection (and the file lock) stuck forever.
+// Leaked connections on this pool are idle and hold no locks, so they are
+// harmless once the pool is closed.
+func runMigrations() error {
+	if err := gmx.InitClient(); err != nil {
+		return err
+	}
+	log := gmx.Log.With().Str("component", "migrations").Logger()
+	rawDB, err := dbutil.NewFromConfig("gomuks", dbutil.Config{
+		PoolConfig: dbutil.PoolConfig{
+			Type:         "sqlite-wasm-js",
+			URI:          "file:/gomuks.db?_txlock=immediate&_locking_mode=NORMAL&_journal_mode=DELETE",
+			MaxOpenConns: 5,
+			MaxIdleConns: 1,
+		},
+	}, dbutil.ZeroLogger(log))
+	if err != nil {
+		return fmt.Errorf("failed to open migration pool: %w", err)
+	}
+	defer func() {
+		_ = rawDB.Close()
+	}()
+	return hicli.UpgradeDatabases(log.WithContext(context.Background()), rawDB, nil, log, gmx.PickleKey())
+}
+
 func main() {
 	hicli.InitialDeviceDisplayName = "gomuks web"
 	gmx = gomuks.NewGomuks()
@@ -99,14 +129,20 @@ func main() {
 			Timestamp: ptr.Ptr(false),
 		},
 	}
+	// The driver defaults to EXCLUSIVE locking + PERSIST journal on OPFS,
+	// which requires that only one connection uses the file. See
+	// pkg/sqlite-wasm-js/conn.go for why.
 	gmx.GetDBConfig = func() dbutil.PoolConfig {
 		return dbutil.PoolConfig{
 			Type:         "sqlite-wasm-js",
 			URI:          "file:/gomuks.db?_txlock=immediate",
-			MaxOpenConns: 5,
+			MaxOpenConns: 1,
 			MaxIdleConns: 1,
 		}
 	}
+	// A pool with one connection turns any "query outside the transaction
+	// while inside DoTxn" bug into a hang, so make dbutil panic instead.
+	dbutil.ForceDeadlockDetection = true
 
 	gmx.EventBuffer = gomuks.NewEventBuffer(0)
 	gmx.EventBuffer.Subscribe(0, nil, func(evt *gomuks.BufferedEvent) {
@@ -123,7 +159,16 @@ func main() {
 		Str("go_version", runtime.Version()).
 		Time("built_at", version.Gomuks.BuildTime).
 		Msg("Initializing gomuks in wasm")
+	if err := runMigrations(); err != nil {
+		gmx.Log.WithLevel(zerolog.FatalLevel).Err(err).Msg("Failed to run database migrations")
+		postMessage("wasm-connection", 0, json.RawMessage(`{"connected":false,"reconnecting":false,"error":"Database migration failed"}`))
+		return
+	}
+	gmx.Client.SingleConnectionDB = true
 	gmx.StartClient()
+	if stats := gmx.Client.DB.RawDB.Stats(); stats.InUse > 0 {
+		gmx.Log.Error().Int("in_use", stats.InUse).Msg("Database connections still in use after startup, expect hangs")
+	}
 	gmx.Log.Info().Msg("Initialization complete")
 	postMessage(jsoncmd.EventClientState, 0, gmx.Client.State())
 	postMessage(jsoncmd.EventSyncStatus, 0, gmx.Client.SyncStatus.Load())

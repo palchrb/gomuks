@@ -193,6 +193,17 @@ func (gmx *Gomuks) StartClient() {
 	}
 }
 
+// InitClient creates the hicli client instance (opening the database) without
+// loading the account or starting the sync loop.
+func (gmx *Gomuks) InitClient() error {
+	return gmx.initClient()
+}
+
+// PickleKey returns the key used to pickle olm/megolm state in the crypto store.
+func (gmx *Gomuks) PickleKey() []byte {
+	return []byte("meow")
+}
+
 func (gmx *Gomuks) initClient() error {
 	gmx.initLock.Lock()
 	defer gmx.initLock.Unlock()
@@ -211,7 +222,7 @@ func (gmx *Gomuks) initClient() error {
 		rawDB,
 		nil,
 		gmx.Log.With().Str("component", "hicli").Logger(),
-		[]byte("meow"),
+		gmx.PickleKey(),
 		gmx.HandleEvent,
 	)
 	gmx.Client.Client.SyncPresence = ptr.Val(gmx.Config.Matrix.SetPresence)

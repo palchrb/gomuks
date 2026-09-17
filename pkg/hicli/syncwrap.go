@@ -55,7 +55,11 @@ func (h *hiSyncer) ProcessResponse(ctx context.Context, resp *mautrix.RespSync, 
 			})
 		}
 		var err error
-		if hasEncrypted {
+		if hasEncrypted && !c.SingleConnectionDB {
+			// Decryption inside the transaction takes the lock per event, which
+			// lets background decrypters interleave with long syncs. That
+			// ordering (connection, then lock) is only safe with multiple
+			// connections; see SingleConnectionDB.
 			err = doProcessTxn(ctx)
 		} else {
 			err = c.withEventDecryptionLock(ctx, "", false, doProcessTxn)
