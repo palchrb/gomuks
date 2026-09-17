@@ -23,7 +23,8 @@ type Stmt struct {
 	d *Driver
 	c *Conn
 
-	cptr js.Value
+	cptr  js.Value
+	query string
 
 	numInput int
 
@@ -40,7 +41,16 @@ var (
 	_ driver.StmtQueryContext = &Stmt{}
 )
 
+// Close resets the statement and returns it to the connection's cache.
 func (s *Stmt) Close() error {
+	if err := s.reset(noContextFunc); err != nil {
+		_ = s.finalize()
+		return err
+	}
+	return s.c.releaseStmt(s)
+}
+
+func (s *Stmt) finalize() error {
 	rc := s.d.CAPI.Call("sqlite3_finalize", s.cptr).Int()
 	if rc != 0 {
 		return s.d.MakeError(s.c, "sqlite3_finalize", rc)

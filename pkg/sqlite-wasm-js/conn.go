@@ -9,6 +9,7 @@
 package sqlite_wasm_js
 
 import (
+	"container/list"
 	"context"
 	"database/sql/driver"
 	"fmt"
@@ -41,6 +42,23 @@ type Conn struct {
 	params     paramEncoder
 	scratchJS  js.Value
 	scratchLen int
+
+	// Prepared statement cache, keyed by SQL. database/sql prepares and
+	// finalizes a statement for every Query/Exec call that goes through
+	// QueryerContext/ExecerContext, and sqlite3_prepare_v2 on a few hundred
+	// bytes of SQL costs more than the query itself for point lookups.
+	// Statements in the cache are idle; handing one out removes it, and
+	// Stmt.Close puts it back (or finalizes it if the cache is full).
+	stmtCache    map[string]*list.Element
+	stmtCacheLRU *list.List
+}
+
+// stmtCacheSize is the number of idle prepared statements kept per connection.
+const stmtCacheSize = 64
+
+type cachedStmt struct {
+	query string
+	stmt  *Stmt
 }
 
 // chunkLimitBytes is the approximate size at which the JS side stops
@@ -83,6 +101,7 @@ func (c *Conn) Ping(ctx context.Context) error {
 
 func (c *Conn) Close() error {
 	c.closed.Store(true)
+	c.flushStmtCache()
 	rc := c.d.CAPI.Call("sqlite3_close_v2", c.cptr).Int()
 	if rc != SQLITE_OK {
 		return c.d.MakeError(c, "sqlite3_close_v2", rc)
@@ -197,8 +216,36 @@ func (c *Conn) queryString(ctx context.Context, query string) (string, error) {
 //	return nil
 //}
 
+// isDDL reports whether the query may change the schema, which would make
+// the column metadata cached on prepared statements stale.
+func isDDL(query string) bool {
+	query = strings.TrimSpace(query)
+	for _, prefix := range []string{"CREATE", "ALTER", "DROP"} {
+		if len(query) >= len(prefix) && strings.EqualFold(query[:len(prefix)], prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Conn) flushStmtCache() {
+	for _, elem := range c.stmtCache {
+		_ = elem.Value.(*cachedStmt).stmt.finalize()
+	}
+	c.stmtCache = nil
+	c.stmtCacheLRU = nil
+}
+
 func (c *Conn) PrepareContext(ctx context.Context, query string) (stmt driver.Stmt, retErr error) {
 	defer catchIntoError(&retErr)
+	if isDDL(query) {
+		c.flushStmtCache()
+	}
+	if elem, ok := c.stmtCache[query]; ok {
+		delete(c.stmtCache, query)
+		c.stmtCacheLRU.Remove(elem)
+		return elem.Value.(*cachedStmt).stmt, nil
+	}
 	res := c.d.Meow.Call("prepare", c.cptr, query)
 	rc := res.Get("rc")
 	ptr := res.Get("ptr")
@@ -207,12 +254,40 @@ func (c *Conn) PrepareContext(ctx context.Context, query string) (stmt driver.St
 	} else if ptr.IsUndefined() {
 		return nil, fmt.Errorf("sqlite3_prepare_v2 returned no error and no statement")
 	} else {
-		return &Stmt{d: c.d, c: c, cptr: ptr}, nil
+		return &Stmt{d: c.d, c: c, cptr: ptr, query: query}, nil
 	}
+}
+
+// releaseStmt returns a statement to the cache instead of finalizing it.
+// The statement must already be reset.
+func (c *Conn) releaseStmt(s *Stmt) error {
+	if c.closed.Load() {
+		return s.finalize()
+	}
+	if c.stmtCache == nil {
+		c.stmtCache = make(map[string]*list.Element, stmtCacheSize)
+		c.stmtCacheLRU = list.New()
+	}
+	if _, exists := c.stmtCache[s.query]; exists {
+		// Two statements with the same SQL were in use at once; keep one.
+		return s.finalize()
+	}
+	c.stmtCache[s.query] = c.stmtCacheLRU.PushFront(&cachedStmt{query: s.query, stmt: s})
+	if c.stmtCacheLRU.Len() > stmtCacheSize {
+		oldest := c.stmtCacheLRU.Back()
+		c.stmtCacheLRU.Remove(oldest)
+		entry := oldest.Value.(*cachedStmt)
+		delete(c.stmtCache, entry.query)
+		return entry.stmt.finalize()
+	}
+	return nil
 }
 
 func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	if len(args) == 0 {
+		if isDDL(query) {
+			c.flushStmtCache()
+		}
 		rc := c.d.CAPI.Call("sqlite3_exec", c.cptr, query, 0, 0, 0).Int()
 		if rc != SQLITE_OK {
 			return nil, c.d.MakeError(c, "sqlite3_exec", rc)
