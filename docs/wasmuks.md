@@ -18,8 +18,9 @@ npm run build        # writes web/dist/
 
 ## Running with Docker
 
-The easiest way to host it is the prebuilt image, which contains nginx and the
-static files:
+The easiest way to host it is the prebuilt image: a single static Go binary
+(`cmd/wasmukserve`) with the frontend embedded, the same way the native gomuks
+server embeds its frontend.
 
 ```sh
 cp config.example.json config.json           # optional, see below
@@ -35,7 +36,21 @@ RAM: **don't build on a Raspberry Pi**, pull the image instead.
 
 ## Serving without Docker
 
-Serve `web/dist/` as static files from any web server. The wasm mode is enabled
+Build the frontend as above, optionally pre-compress it, and build the server
+binary, which embeds `web/dist/`:
+
+```sh
+cd web && find dist -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.svg' \) -exec gzip -9 -k {} + && cd ..
+go build -o wasmukserve ./cmd/wasmukserve
+./wasmukserve -listen 127.0.0.1:8181 -config config.json
+```
+
+`wasmukserve` serves the pre-compressed files to clients that accept gzip,
+sets the cache headers below, and serves `config.json` from the given path
+so it can be edited without rebuilding. `-dir` serves a directory instead of
+the embedded files.
+
+Any other static file server works too: serve `web/dist/` as static files. The wasm mode is enabled
 automatically when the files are served statically (the Go server injects a
 `gomuks-frontend-etag` meta tag that turns it off).
 

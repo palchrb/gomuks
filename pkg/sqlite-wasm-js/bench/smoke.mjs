@@ -2,17 +2,21 @@
 // that the backend initializes and shows the login screen, that config.json
 // defaults are applied, and that a second tab is refused by the Web Lock.
 // Usage: node smoke.mjs [path/to/web/dist]
+//        node smoke.mjs --url http://127.0.0.1:8181   (test an already running server;
+//        it must serve a config.json equivalent to configJSON below)
 import http from "node:http"
 import fs from "node:fs"
 import path from "node:path"
 import { chromium } from "playwright"
 
-const root = path.resolve(process.argv[2] ?? "../../../web/dist")
+const urlArg = process.argv.indexOf("--url")
+const externalURL = urlArg >= 0 ? process.argv[urlArg + 1] : null
+const root = path.resolve(externalURL ? "." : (process.argv[2] ?? "../../../web/dist"))
 const types = {
 	".html": "text/html", ".js": "text/javascript", ".wasm": "application/wasm", ".json": "application/json",
 	".css": "text/css", ".png": "image/png", ".svg": "image/svg+xml",
 }
-const configJSON = {
+export const configJSON = {
 	preferences: { show_membership_events: false, bogus_key: 1, display_read_receipts: "no" },
 	wasm: { memory_limit_mb: 256, initial_timeline_limit: 10, single_connection: true },
 }
@@ -33,8 +37,11 @@ const server = http.createServer((req, res) => {
 	res.writeHead(200, { "Content-Type": types[path.extname(file)] ?? "application/octet-stream" })
 	fs.createReadStream(file).pipe(res)
 })
-await new Promise(resolve => server.listen(0, "127.0.0.1", resolve))
-const port = server.address().port
+let baseURL = externalURL
+if (!baseURL) {
+	await new Promise(resolve => server.listen(0, "127.0.0.1", resolve))
+	baseURL = `http://127.0.0.1:${server.address().port}`
+}
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, headless: true })
 const context = await browser.newContext()
@@ -53,7 +60,7 @@ const attach = page => {
 
 const tab1 = await context.newPage()
 attach(tab1)
-await tab1.goto(`http://127.0.0.1:${port}/`)
+await tab1.goto(`${baseURL}/`)
 await tab1.waitForSelector("#mxlogin-username", { timeout: 60000 }).catch(() => null)
 const state = await tab1.evaluate(() => ({
 	client: window.client?.state?.current,
@@ -79,7 +86,7 @@ check(!logs.some(l => /No pickle key provided/.test(l)), "backend received the p
 
 const tab2 = await context.newPage()
 attach(tab2)
-await tab2.goto(`http://127.0.0.1:${port}/`)
+await tab2.goto(`${baseURL}/`)
 const locked = await tab2.waitForSelector("text=already open in another tab", { timeout: 20000 }).catch(() => null)
 check(Boolean(locked), "second tab refused by the Web Lock")
 await tab2.close()
@@ -89,7 +96,9 @@ await tab1.waitForTimeout(500)
 check((await tab1.evaluate(() => window.client?.rpc?.connect?.current?.connected)) === true, "first tab still connected")
 
 await browser.close()
-server.close()
+if (!externalURL) {
+	server.close()
+}
 if (failures.length) {
 	console.log("---- logs ----")
 	for (const l of logs) {

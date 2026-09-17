@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Builds gomuks web with the embedded wasm backend and packages it as a
-# static site served by nginx. See docs/wasmuks.md.
+# single static Go binary (cmd/wasmukserve) that serves it. See docs/wasmuks.md.
 #
 # The build needs a few GB of RAM (Go links a 30 MB wasm binary and vite
 # bundles the frontend). Build it on a PC or in CI, not on a Raspberry Pi;
@@ -32,7 +32,20 @@ RUN npm run build \
 	&& find dist -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.svg' \) \
 		-exec gzip -9 -k {} +
 
-FROM nginx:1.27-alpine
-COPY docker/nginx-wasmuks.conf /etc/nginx/conf.d/default.conf
-COPY --from=web /src/web/dist /usr/share/nginx/html
-EXPOSE 80
+# The server binary embeds web/dist (like the native gomuks server does), so
+# the final image is just that one static binary.
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS server
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+COPY --from=web /src/web/dist web/dist
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /wasmukserve ./cmd/wasmukserve
+
+FROM scratch
+COPY --from=server /wasmukserve /wasmukserve
+USER 65534:65534
+ENV WASMUKS_LISTEN=0.0.0.0:8181
+EXPOSE 8181
+ENTRYPOINT ["/wasmukserve"]

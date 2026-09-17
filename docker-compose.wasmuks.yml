@@ -12,9 +12,11 @@ services:
     #   context: .
     #   dockerfile: Dockerfile.wasmuks
     ports:
-      - "127.0.0.1:8181:80"
+      - "127.0.0.1:8181:8181"
+    environment:
+      WASMUKS_CONFIG: /config.json
     volumes:
-      # Comment this out if you don't have a config.json.
-      - ./config.json:/usr/share/nginx/html/config.json:ro
-    mem_limit: 128m
+      # Optional; served as config.json if the file exists.
+      - ./config.json:/config.json:ro
+    mem_limit: 64m
     restart: unless-stopped
