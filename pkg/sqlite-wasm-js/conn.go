@@ -65,19 +65,6 @@ type cachedStmt struct {
 // stepping and returns a partial result; Rows.Next fetches the next chunk.
 const chunkLimitBytes = 1 << 20
 
-// Defaults for the OPFS SAHPool VFS. The pool has no shared memory, so
-// journal_mode=WAL silently falls back to a rollback journal. In rollback
-// mode with normal locking, every read transaction has to probe for a hot
-// journal and re-read the change counter from OPFS, which makes point lookups
-// an order of magnitude slower than in memory. EXCLUSIVE locking keeps the
-// file lock across transactions (it must be set before journal_mode), and
-// PERSIST keeps the journal file around instead of creating and deleting it
-// on every transaction. Both require that only one connection uses the file.
-const (
-	defaultLockingMode = "EXCLUSIVE"
-	defaultJournalMode = "PERSIST"
-)
-
 var (
 	_ driver.Conn               = &Conn{}
 	_ driver.ConnPrepareContext = &Conn{}
@@ -215,18 +202,6 @@ func (c *Conn) queryString(ctx context.Context, query string) (string, error) {
 //func (c *Conn) CheckNamedValue(value *driver.NamedValue) error {
 //	return nil
 //}
-
-// isDDL reports whether the query may change the schema, which would make
-// the column metadata cached on prepared statements stale.
-func isDDL(query string) bool {
-	query = strings.TrimSpace(query)
-	for _, prefix := range []string{"CREATE", "ALTER", "DROP"} {
-		if len(query) >= len(prefix) && strings.EqualFold(query[:len(prefix)], prefix) {
-			return true
-		}
-	}
-	return false
-}
 
 func (c *Conn) flushStmtCache() {
 	for _, elem := range c.stmtCache {

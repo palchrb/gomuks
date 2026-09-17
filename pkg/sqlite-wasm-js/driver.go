@@ -32,11 +32,6 @@ var (
 	//_ driver.DriverContext = &Driver{}
 )
 
-// SQLite journal modes, lowercase (the mode is upper-cased before use).
-var validJournalModes = map[string]bool{
-	"delete": true, "truncate": true, "persist": true, "memory": true, "wal": true, "off": true,
-}
-
 func parseOptionalBool(val string, defVal bool) bool {
 	if val == "" {
 		return defVal
@@ -79,20 +74,13 @@ func (d *Driver) Open(connectionString string) (conn driver.Conn, retErr error) 
 	default:
 		return nil, fmt.Errorf("invalid transaction lock mode %q", txLock)
 	}
-	lockingMode := strings.ToUpper(query.Get("_locking_mode"))
-	switch lockingMode {
-	case "":
-		lockingMode = defaultLockingMode
-	case "NORMAL", "EXCLUSIVE":
-		// ok
-	default:
-		return nil, fmt.Errorf("invalid locking mode %q", lockingMode)
+	lockingMode, err := parseLockingMode(query.Get("_locking_mode"))
+	if err != nil {
+		return nil, err
 	}
-	journalMode := strings.ToUpper(query.Get("_journal_mode"))
-	if journalMode == "" {
-		journalMode = defaultJournalMode
-	} else if !validJournalModes[strings.ToLower(journalMode)] {
-		return nil, fmt.Errorf("invalid journal mode %q", journalMode)
+	journalMode, err := parseJournalMode(query.Get("_journal_mode"))
+	if err != nil {
+		return nil, err
 	}
 	var constructorFlags string
 	if readOnly {
