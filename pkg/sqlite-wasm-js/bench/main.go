@@ -133,7 +133,12 @@ func ms(d time.Duration) float64 { return math.Round(float64(d.Microseconds())/1
 
 func benchDriver(mode string, n int, reuse bool, extraPragmas string) (result, error) {
 	res := result{}
+	// The driver defaults to EXCLUSIVE+PERSIST on OPFS; "current" pins the
+	// pre-change modes so the baseline stays comparable over time.
 	uri := fmt.Sprintf("file:/bench-%s-%v-%d.db?_txlock=immediate&connection_mode=%s", mode, reuse, len(extraPragmas), mode)
+	if extraPragmas == "" {
+		uri += "&_locking_mode=NORMAL&_journal_mode=DELETE"
+	}
 	db, err := sql.Open("sqlite-wasm-js", uri)
 	if err != nil {
 		return nil, err
@@ -445,7 +450,8 @@ func main() {
 					if mode == "memory" {
 						continue
 					}
-					r, err = benchDriver(mode, n, false, "PRAGMA locking_mode = EXCLUSIVE;PRAGMA journal_mode = PERSIST")
+					// Driver defaults (EXCLUSIVE locking, PERSIST journal).
+					r, err = benchDriver(mode, n, false, "PRAGMA foreign_keys = ON")
 				case "batched":
 					r, err = benchBatched(mode, n, "")
 				default:

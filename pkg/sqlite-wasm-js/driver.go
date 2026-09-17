@@ -74,6 +74,24 @@ func (d *Driver) Open(connectionString string) (conn driver.Conn, retErr error) 
 	default:
 		return nil, fmt.Errorf("invalid transaction lock mode %q", txLock)
 	}
+	lockingMode := strings.ToUpper(query.Get("_locking_mode"))
+	switch lockingMode {
+	case "":
+		lockingMode = defaultLockingMode
+	case "NORMAL", "EXCLUSIVE":
+		// ok
+	default:
+		return nil, fmt.Errorf("invalid locking mode %q", lockingMode)
+	}
+	journalMode := strings.ToUpper(query.Get("_journal_mode"))
+	switch journalMode {
+	case "":
+		journalMode = defaultJournalMode
+	case "DELETE", "TRUNCATE", "PERSIST", "MEMORY", "WAL", "OFF":
+		// ok
+	default:
+		return nil, fmt.Errorf("invalid journal mode %q", journalMode)
+	}
 	var constructorFlags string
 	if readOnly {
 		constructorFlags = "r"
@@ -100,11 +118,13 @@ func (d *Driver) Open(connectionString string) (conn driver.Conn, retErr error) 
 		return nil, fmt.Errorf("invalid connection mode %q", connectionMode)
 	}
 	conn, retErr = (&Conn{
-		d:       d,
-		ptr:     db,
-		cptr:    db.Get("pointer"),
-		txlock:  txLock,
-		sahpool: sahPool,
+		d:           d,
+		ptr:         db,
+		cptr:        db.Get("pointer"),
+		txlock:      txLock,
+		sahpool:     sahPool,
+		lockingMode: lockingMode,
+		journalMode: journalMode,
 	}).connectHook(noContextFunc)
 	return
 }

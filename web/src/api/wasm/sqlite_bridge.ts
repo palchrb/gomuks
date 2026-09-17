@@ -61,7 +61,10 @@ async function init() {
 		},
 	}
 
-	sqlite3.PoolUtil = await sqlite3.installOpfsSAHPoolVfs({})
+	// Each open file takes one sync access handle from the pool. With
+	// journal_mode=PERSIST the journal file stays around permanently, so the
+	// database needs two, and the default capacity of 6 leaves little slack.
+	sqlite3.PoolUtil = await sqlite3.installOpfsSAHPoolVfs({ initialCapacity: 12 })
 
 	self.sqlite3 = sqlite3
 }

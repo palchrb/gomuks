@@ -12,6 +12,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"syscall/js"
 
@@ -27,9 +28,24 @@ type Conn struct {
 
 	closed atomic.Bool
 
-	txlock  string
-	sahpool bool
+	txlock      string
+	sahpool     bool
+	lockingMode string
+	journalMode string
 }
+
+// Defaults for the OPFS SAHPool VFS. The pool has no shared memory, so
+// journal_mode=WAL silently falls back to a rollback journal. In rollback
+// mode with normal locking, every read transaction has to probe for a hot
+// journal and re-read the change counter from OPFS, which makes point lookups
+// an order of magnitude slower than in memory. EXCLUSIVE locking keeps the
+// file lock across transactions (it must be set before journal_mode), and
+// PERSIST keeps the journal file around instead of creating and deleting it
+// on every transaction. Both require that only one connection uses the file.
+const (
+	defaultLockingMode = "EXCLUSIVE"
+	defaultJournalMode = "PERSIST"
+)
 
 var (
 	_ driver.Conn               = &Conn{}
@@ -72,13 +88,33 @@ func (c *Conn) connectHook(ctx context.Context) (dc driver.Conn, err error) {
 		return
 	}
 	if c.sahpool {
-		// WAL mode is only useful when using the SAH pool, so don't enable it otherwise
-		_, err = c.ExecContext(ctx, "PRAGMA journal_mode = WAL", nil)
+		_, err = c.ExecContext(ctx, "PRAGMA locking_mode = "+c.lockingMode, nil)
+		if err != nil {
+			return
+		}
+		_, err = c.ExecContext(ctx, "PRAGMA journal_mode = "+c.journalMode, nil)
 		if err != nil {
 			return
 		}
 		_, err = c.ExecContext(ctx, "PRAGMA synchronous = NORMAL", nil)
 		if err != nil {
+			return
+		}
+		// SQLite silently keeps the previous mode if the VFS can't support the
+		// requested one (e.g. WAL without shared memory), so verify.
+		var effective string
+		effective, err = c.queryString(ctx, "PRAGMA journal_mode")
+		if err != nil {
+			return
+		} else if !strings.EqualFold(effective, c.journalMode) {
+			err = fmt.Errorf("requested journal_mode %s but got %s", c.journalMode, effective)
+			return
+		}
+		effective, err = c.queryString(ctx, "PRAGMA locking_mode")
+		if err != nil {
+			return
+		} else if !strings.EqualFold(effective, c.lockingMode) {
+			err = fmt.Errorf("requested locking_mode %s but got %s", c.lockingMode, effective)
 			return
 		}
 	}
@@ -87,6 +123,23 @@ func (c *Conn) connectHook(ctx context.Context) (dc driver.Conn, err error) {
 		return
 	}
 	return c, nil
+}
+
+// queryString runs a query and returns the first column of the first row as a string.
+func (c *Conn) queryString(ctx context.Context, query string) (string, error) {
+	rows, err := c.QueryContext(ctx, query, nil)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+	dest := make([]driver.Value, len(rows.Columns()))
+	if err = rows.Next(dest); err != nil {
+		return "", err
+	}
+	str, _ := dest[0].(string)
+	return str, nil
 }
 
 //func (c *Conn) CheckNamedValue(value *driver.NamedValue) error {
