@@ -179,6 +179,13 @@ func main() {
 			log.Fatalf("no frontend embedded in this binary; build web/dist first or pass -dir")
 		}
 	}
+	if *configPath != "" {
+		if info, err := os.Stat(*configPath); err != nil {
+			log.Printf("config %s not readable (%v); serving without config.json", *configPath, err)
+		} else if info.IsDir() {
+			log.Printf("config %s is a directory, not a file (Docker creates one when the bind mount source is missing); serving without config.json", *configPath)
+		}
+	}
 	srv := &http.Server{
 		Addr:              *listen,
 		Handler:           &server{files: files, configPath: *configPath},

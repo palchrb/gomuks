@@ -19,7 +19,9 @@ services:
     environment:
       WASMUKS_CONFIG: /config.json
     volumes:
-      # Optional; served as config.json if the file exists.
+      # Optional; served as config.json if the file exists. Create the file
+      # BEFORE the first "up": if it's missing, Docker creates an empty
+      # directory with that name instead, and the config is ignored.
       - ./config.json:/config.json:ro
     mem_limit: 64m
     restart: unless-stopped

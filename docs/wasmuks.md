@@ -23,11 +23,15 @@ The easiest way to host it is the prebuilt image: a single static Go binary
 server embeds its frontend.
 
 ```sh
-cp config.example.json config.json           # optional, see below
+cp config.example.json config.json           # optional, see below; do it before the first "up"
 docker compose -f docker-compose.wasmuks.yml pull
 docker compose -f docker-compose.wasmuks.yml up -d
 # http://127.0.0.1:8181
 ```
+
+If `config.json` doesn't exist when the container first starts, Docker creates
+an empty *directory* with that name and the config is ignored (the server
+logs a warning). Remove the directory, create the file, and restart.
 
 The image is built by the "Docker (wasmuks)" GitHub Actions workflow for amd64
 and arm64 on every push and published to `ghcr.io/<owner>/gomuks-web`, tagged
