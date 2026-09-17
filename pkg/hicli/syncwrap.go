@@ -52,7 +52,7 @@ func (h *hiSyncer) ProcessResponse(ctx context.Context, resp *mautrix.RespSync, 
 	txnStart := time.Now()
 	defer func() {
 		if dur := time.Since(txnStart); dur > 500*time.Millisecond {
-			zerolog.Ctx(ctx).Debug().
+			zerolog.Ctx(ctx).Info().
 				Dur("duration", dur).
 				Int("joined_rooms", len(resp.Rooms.Join)).
 				Bool("initial", since == "").

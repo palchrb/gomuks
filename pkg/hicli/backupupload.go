@@ -213,7 +213,7 @@ func (h *HiClient) RestoreKeyBackup(
 	progressCallback(progress)
 	saveStart := time.Now()
 	defer func() {
-		log.Debug().
+		log.Info().
 			Dur("save_duration", time.Since(saveStart)).
 			Int("sessions", len(entries)).
 			Msg("Key backup restore finished")

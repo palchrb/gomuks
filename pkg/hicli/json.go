@@ -61,7 +61,7 @@ func (h *HiClient) SubmitJSONCommand(ctx context.Context, req *JSONCommand) *JSO
 	start := time.Now()
 	resp, err := h.handleJSONCommand(ctx, req)
 	if dur := time.Since(start); dur > 200*time.Millisecond {
-		log.Debug().Dur("duration", dur).Msg("Slow command")
+		log.Info().Dur("duration", dur).Msg("Slow command")
 	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {

@@ -154,9 +154,10 @@ func runMigrations() error {
 type wasmuksInit struct {
 	LastServerTS int64 `json:"last_server_ts"`
 	// From the "wasm" section of config.json, see docs/wasmuks.md.
-	SingleConnection     *bool `json:"single_connection,omitempty"`
-	MemoryLimitMB        int   `json:"memory_limit_mb,omitempty"`
-	InitialTimelineLimit int   `json:"initial_timeline_limit,omitempty"`
+	SingleConnection     *bool  `json:"single_connection,omitempty"`
+	MemoryLimitMB        int    `json:"memory_limit_mb,omitempty"`
+	InitialTimelineLimit int    `json:"initial_timeline_limit,omitempty"`
+	LogLevel             string `json:"log_level,omitempty"`
 }
 
 const (
@@ -179,7 +180,7 @@ func logMemStats() {
 	for {
 		time.Sleep(30 * time.Second)
 		runtime.ReadMemStats(&stats)
-		gmx.Log.Debug().
+		gmx.Log.Info().
 			Uint64("heap_alloc_mb", stats.HeapAlloc>>20).
 			Uint64("heap_sys_mb", stats.HeapSys>>20).
 			Uint64("total_alloc_mb", stats.TotalAlloc>>20).
@@ -261,6 +262,11 @@ func main() {
 		},
 	}
 	initParams = readInit()
+	if initParams.LogLevel != "" {
+		if level, err := zerolog.ParseLevel(initParams.LogLevel); err == nil {
+			gmx.Config.Logging.MinLevel = ptr.Ptr(level)
+		}
+	}
 	// The driver defaults to EXCLUSIVE locking + PERSIST journal on OPFS,
 	// which requires that only one connection uses the file (see
 	// pkg/sqlite-wasm-js/conn.go). That's fastest per query, but every read

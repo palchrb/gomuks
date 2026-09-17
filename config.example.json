@@ -6,6 +6,7 @@
 	"wasm": {
 		"single_connection": true,
 		"memory_limit_mb": 512,
-		"initial_timeline_limit": 20
+		"initial_timeline_limit": 20,
+		"log_level": "info"
 	}
 }

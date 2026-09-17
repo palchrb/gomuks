@@ -98,6 +98,7 @@ The same file can tune the wasm backend in a `wasm` section (see
 | `single_connection` | `true` | One SQLite connection with EXCLUSIVE locking (fastest per query, but reads wait for running write transactions) or five connections with normal locking. Compare on your own account. |
 | `memory_limit_mb` | `512` | Soft limit for the Go heap in the worker. The garbage collector works harder near it. |
 | `initial_timeline_limit` | `20` | Events per room requested in the initial sync. Lower is less memory and a faster first sync; older history is loaded when scrolling. |
+| `log_level` | `debug` | Backend log level in the browser console (`trace`, `debug`, `info`, `warn`, `error`). `debug` logs every decrypted event; `info` keeps only the resource and timing lines below. |
 
 The backend logs the effective values ("wasm configuration") and heap
 statistics every 30 seconds in the browser console, and commands that take
@@ -142,8 +143,11 @@ history.
 
 ## Measuring resource use
 
-Everything is logged to the browser console (the wasm build logs at debug
-level). Open DevTools before loading the page and look for:
+Everything is logged to the browser console. The default level is `debug`,
+which is very chatty (every decrypted event); set `"log_level": "info"` in
+`config.json` to keep only the lines below, or type this in the console's
+filter box: `/Memory stats|wasm compile|wasm configuration|Initial room list|Slow command|Slow sync|Key backup restore|Storage persistence/`.
+Open DevTools before loading the page and look for:
 
 | Line | Meaning |
 |---|---|

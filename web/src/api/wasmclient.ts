@@ -34,6 +34,8 @@ export interface WasmuksInit {
 	single_connection?: boolean
 	memory_limit_mb?: number
 	initial_timeline_limit?: number
+	// zerolog level name: trace, debug, info, warn, error. Default debug.
+	log_level?: string
 }
 
 // Reads the "wasm" section of config.json next to index.html. Preferences in
@@ -59,6 +61,10 @@ async function loadWasmConfig(): Promise<Partial<WasmuksInit>> {
 		}
 		if (typeof wasm.initial_timeline_limit === "number" && wasm.initial_timeline_limit > 0) {
 			out.initial_timeline_limit = Math.floor(wasm.initial_timeline_limit)
+		}
+		const logLevels = ["trace", "debug", "info", "warn", "error"]
+		if (typeof wasm.log_level === "string" && logLevels.includes(wasm.log_level)) {
+			out.log_level = wasm.log_level
 		}
 		if (Object.keys(out).length) {
 			console.info("Loaded wasm config:", out)
