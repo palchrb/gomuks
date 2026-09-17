@@ -2,11 +2,14 @@
 # http://127.0.0.1:8181 without a reverse proxy. See docs/wasmuks.md.
 #
 #   cp config.example.json config.json   # optional: default preferences and wasm tuning
+#   echo GOMUKS_WEB_TAG=<branch-tag> > .env   # only when not using main
 #   docker compose -f docker-compose.wasmuks.yml pull
 #   docker compose -f docker-compose.wasmuks.yml up -d
 services:
   gomuks-web:
-    image: ghcr.io/palchrb/gomuks-web:latest
+    # The image tag follows the git branch ("latest" for main). Set it in a
+    # .env file next to this compose file, e.g. GOMUKS_WEB_TAG=claude-integrate-ntfy-notifications-jOJH5
+    image: ghcr.io/palchrb/gomuks-web:${GOMUKS_WEB_TAG:-latest}
     # To build locally instead of pulling (needs ~4 GB RAM; not on a Raspberry Pi):
     # build:
     #   context: .

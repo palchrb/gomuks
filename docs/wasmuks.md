@@ -30,7 +30,10 @@ docker compose -f docker-compose.wasmuks.yml up -d
 ```
 
 The image is built by the "Docker (wasmuks)" GitHub Actions workflow for amd64
-and arm64 and published to `ghcr.io/<owner>/gomuks-web`. It can also be built
+and arm64 on every push and published to `ghcr.io/<owner>/gomuks-web`, tagged
+with the branch name (`latest` for `main`; slashes become dashes). Put
+`GOMUKS_WEB_TAG=<tag>` in a `.env` file next to the compose file to run a
+branch build. It can also be built
 locally with `docker build -f Dockerfile.wasmuks .`, but that needs a few GB of
 RAM: **don't build on a Raspberry Pi**, pull the image instead.
 
@@ -136,6 +139,44 @@ uses an HTTP endpoint) and shows progress in Settings › Key export/import ›
 Restore from backup. Without a full restore, keys are fetched from the backup
 one session at a time as messages fail to decrypt, which is slow for a large
 history.
+
+## Measuring resource use
+
+Everything is logged to the browser console (the wasm build logs at debug
+level). Open DevTools before loading the page and look for:
+
+| Line | Meaning |
+|---|---|
+| `wasm compile+instantiate: N ms` | Time V8 spent compiling the 30 MB module. Should be well under a second on a PC. |
+| `wasm configuration` | Effective `config.json` values (connections, memory limit, timeline limit). |
+| `Initial room list sent` | Time from Go start to the room list, number of rooms, and heap size right after the initial sync. |
+| `Memory stats` | Go heap every 30 seconds (`heap_alloc_mb` is live data, `heap_sys_mb` is what wasm memory has grown to and never shrinks). |
+| `Slow command` / `Slow sync processing` | Any frontend request over 200 ms or sync batch over 500 ms, with its duration. |
+| `Key backup restore finished` | Sessions restored and how long saving took. |
+
+For the browser's own view, use Chrome's Task Manager (Shift+Esc): the
+renderer row for the tab includes V8's compiled code and the frontend. Note
+it right after the initial sync and again after ten minutes of use: a number
+that keeps climbing points to a leak, one that flattens is the platform cost.
+
+To compare database modes on your own account, set
+`"wasm": {"single_connection": false}` in `config.json`, reload, and compare
+`Slow command` lines and how quickly rooms open.
+
+## Later
+
+Not done, kept as options:
+
+* **Push notifications** via a stateless Matrix push gateway in
+  `wasmukserve`: the frontend would register a pusher with
+  `format: event_id_only` and the Web Push subscription in the pusher data, so
+  the server forwards "new message in room X" without ever holding keys or
+  content.
+* **Smaller binary**: `wasm-opt -Oz` and leaving syntax highlighting and
+  markdown rendering out of the wasm build (roughly 20-25 % smaller, which
+  also shrinks V8's compiled code proportionally).
+* **Native gomuks per user** as a compose file, for people who use the
+  server machine itself as a client.
 
 ## Limitations compared to the server build
 

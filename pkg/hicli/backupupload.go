@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"go.mau.fi/gomuks/pkg/hicli/jsoncmd"
 	"slices"
 	"time"
 
@@ -19,6 +18,8 @@ import (
 	"maunium.net/go/mautrix/crypto"
 	"maunium.net/go/mautrix/crypto/backup"
 	"maunium.net/go/mautrix/id"
+
+	"go.mau.fi/gomuks/pkg/hicli/jsoncmd"
 )
 
 func (h *HiClient) uploadKeysToBackup(ctx context.Context) {

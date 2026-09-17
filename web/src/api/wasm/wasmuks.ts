@@ -133,7 +133,13 @@ async function loadPickleKey(): Promise<Uint8Array> {
 	const go = new Go()
 	await initSqlite()
 	self.wasmuksPickleKey = await loadPickleKey()
+	const compileStart = performance.now()
 	const instance = await initGomuksWasm(go.importObject)
+	const memory = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory
+	console.info(
+		`wasm compile+instantiate: ${(performance.now() - compileStart).toFixed(0)} ms`,
+		memory ? `(worker JS heap ${(memory.usedJSHeapSize / 1048576).toFixed(0)} MB)` : "",
+	)
 	await setupMediaChannel()
 	await go.run(instance)
 	self.postMessage({

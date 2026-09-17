@@ -166,6 +166,8 @@ const (
 
 var initParams wasmuksInit
 
+var processStart = time.Now()
+
 func singleConnection() bool {
 	return initParams.SingleConnection == nil || *initParams.SingleConnection
 }
@@ -339,10 +341,22 @@ func main() {
 		// If the frontend restored its room list from IndexedDB, only send
 		// what changed since then (same as the websocket path does).
 		gmx.Log.Info().Int64("catchup_since", initParams.LastServerTS).Msg("Sending initial sync")
+		initStart := time.Now()
+		var roomCount int
 		for payload := range gmx.Client.GetInitialSync(ctx, 100, initParams.LastServerTS) {
+			roomCount += len(payload.Rooms)
 			postMessage(jsoncmd.EventSyncComplete, 0, payload)
 		}
 		postMessage(jsoncmd.EventInitComplete, 0, gmx.Client.SyncStatus.Load())
+		var stats runtime.MemStats
+		runtime.ReadMemStats(&stats)
+		gmx.Log.Info().
+			Dur("duration", time.Since(initStart)).
+			Dur("since_start", time.Since(processStart)).
+			Int("rooms", roomCount).
+			Uint64("heap_alloc_mb", stats.HeapAlloc>>20).
+			Uint64("heap_sys_mb", stats.HeapSys>>20).
+			Msg("Initial room list sent")
 	}
 
 	select {}
