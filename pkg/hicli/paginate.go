@@ -417,10 +417,12 @@ func (h *HiClient) PaginateServer(ctx context.Context, roomID id.RoomID, limit i
 	if room.PrevBatch == database.PrevBatchPaginationComplete {
 		return &jsoncmd.PaginationResponse{Events: []*database.Event{}, HasMore: false}, nil
 	}
+	fetchStart := time.Now()
 	resp, err := h.Client.Messages(ctx, roomID, room.PrevBatch, "", mautrix.DirectionBackward, nil, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get messages from server: %w", err)
 	}
+	fetchDuration := time.Since(fetchStart)
 	zerolog.Ctx(ctx).Debug().
 		Int("event_count", len(resp.Chunk)).
 		Str("start", resp.Start).
@@ -505,9 +507,27 @@ func (h *HiClient) PaginateServer(ctx context.Context, roomID id.RoomID, limit i
 		}
 		return nil
 	}
+	lockStart := time.Now()
+	var lockWait, txnDuration time.Duration
 	err = h.withEventDecryptionLock(ctx, "", false, func(ctx context.Context) error {
+		lockWait = time.Since(lockStart)
+		txnStart := time.Now()
+		defer func() {
+			txnDuration = time.Since(txnStart)
+		}()
 		return h.DB.DoTxn(ctx, nil, paginationTxn)
 	})
+	if total := time.Since(fetchStart); total > 500*time.Millisecond {
+		// Split so it's visible whether the homeserver, the lock or local
+		// processing (decrypt + database) is the slow part.
+		zerolog.Ctx(ctx).Info().
+			Dur("total", total).
+			Dur("fetch", fetchDuration).
+			Dur("lock_wait", lockWait).
+			Dur("process", txnDuration).
+			Int("events", len(resp.Chunk)).
+			Msg("Slow pagination")
+	}
 	if err == nil && wakeupSessionRequests {
 		h.WakeupRequestQueue()
 	}

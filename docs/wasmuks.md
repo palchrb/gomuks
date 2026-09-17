@@ -161,6 +161,7 @@ Open DevTools before loading the page and look for:
 | `Initial room list sent` | Time from Go start to the room list, number of rooms, and heap size right after the initial sync. |
 | `Memory stats` | Go heap every 30 seconds (`heap_alloc_mb` is live data, `heap_sys_mb` is what wasm memory has grown to and never shrinks). |
 | `Slow command` / `Slow sync processing` | Any frontend request over 200 ms or sync batch over 500 ms, with its duration. |
+| `Slow pagination` | History loads over 500 ms, split into `fetch` (homeserver), `lock_wait` and `process` (decrypt + database). |
 | `Key backup restore finished` | Sessions restored and how long saving took. |
 
 For the browser's own view, use Chrome's Task Manager (Shift+Esc): the
