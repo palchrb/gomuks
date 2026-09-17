@@ -156,14 +156,23 @@ type wasmuksInit struct {
 	// From the "wasm" section of config.json, see docs/wasmuks.md.
 	SingleConnection     *bool  `json:"single_connection,omitempty"`
 	MemoryLimitMB        int    `json:"memory_limit_mb,omitempty"`
+	GCBallastMB          *int   `json:"gc_ballast_mb,omitempty"`
 	InitialTimelineLimit int    `json:"initial_timeline_limit,omitempty"`
 	LogLevel             string `json:"log_level,omitempty"`
 }
 
 const (
 	defaultMemoryLimitMB        = 512
+	defaultGCBallastMB          = 64
 	defaultInitialTimelineLimit = 20
 )
+
+// gcBallast keeps the GC's heap target up. The live heap in wasm is tiny
+// between syncs (a few MB), so with the default GOGC every few MB of
+// allocation triggered a full stop-the-world collection on the single
+// thread: scrolling history caused ~140 collections per GB allocated. The
+// ballast is never written, so it costs address space rather than memory.
+var gcBallast []byte
 
 var initParams wasmuksInit
 
@@ -293,7 +302,13 @@ func main() {
 	// client machines. A soft limit makes the GC work harder near it.
 	memoryLimitMB := cmp.Or(initParams.MemoryLimitMB, defaultMemoryLimitMB)
 	debug.SetMemoryLimit(int64(memoryLimitMB) << 20)
-	debug.SetGCPercent(50)
+	ballastMB := defaultGCBallastMB
+	if initParams.GCBallastMB != nil && *initParams.GCBallastMB >= 0 {
+		ballastMB = *initParams.GCBallastMB
+	}
+	if ballastMB > 0 {
+		gcBallast = make([]byte, ballastMB<<20)
+	}
 	go logMemStats()
 	// A pool with one connection turns any "query outside the transaction
 	// while inside DoTxn" bug into a hang, so make dbutil panic instead.
@@ -333,6 +348,7 @@ func main() {
 	gmx.Log.Info().
 		Bool("single_connection", gmx.Client.SingleConnectionDB).
 		Int("memory_limit_mb", memoryLimitMB).
+		Int("gc_ballast_mb", ballastMB).
 		Int("initial_timeline_limit", gmx.Client.InitialSyncTimelineLimit).
 		Msg("wasm configuration")
 	gmx.StartClient()

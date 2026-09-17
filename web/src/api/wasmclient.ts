@@ -33,6 +33,7 @@ export interface WasmuksInit {
 	// From the "wasm" section of config.json, see docs/wasmuks.md.
 	single_connection?: boolean
 	memory_limit_mb?: number
+	gc_ballast_mb?: number
 	initial_timeline_limit?: number
 	// zerolog level name: trace, debug, info, warn, error. Default debug.
 	log_level?: string
@@ -58,6 +59,9 @@ async function loadWasmConfig(): Promise<Partial<WasmuksInit>> {
 		}
 		if (typeof wasm.memory_limit_mb === "number" && wasm.memory_limit_mb > 0) {
 			out.memory_limit_mb = Math.floor(wasm.memory_limit_mb)
+		}
+		if (typeof wasm.gc_ballast_mb === "number" && wasm.gc_ballast_mb >= 0) {
+			out.gc_ballast_mb = Math.floor(wasm.gc_ballast_mb)
 		}
 		if (typeof wasm.initial_timeline_limit === "number" && wasm.initial_timeline_limit > 0) {
 			out.initial_timeline_limit = Math.floor(wasm.initial_timeline_limit)
