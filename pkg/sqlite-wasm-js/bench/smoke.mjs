@@ -69,6 +69,8 @@ check(state.receipts === true, "config.json value with wrong type ignored")
 check(typeof state.storage?.persisted === "boolean" || state.storage?.persisted === null, "storage status reported")
 check(logs.some(l => /Initialization complete/.test(l)), "backend logged initialization complete")
 check(!logs.some(l => /panic|pageerror|deadlock/i.test(l)), "no panics or page errors")
+check(logs.some(l => /Generated new pickle key/.test(l)), "fresh install generated a pickle key")
+check(!logs.some(l => /No pickle key provided/.test(l)), "backend received the pickle key")
 
 const tab2 = await context.newPage()
 attach(tab2)

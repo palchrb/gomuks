@@ -29,6 +29,24 @@ node run.js 10000 "current,current+exclusive+persist"   # subset
 `run.js` looks for Playwright's Chromium via `PLAYWRIGHT_BROWSERS_PATH` or the
 `CHROMIUM_PATH` environment variable.
 
+## Reference numbers
+
+Headless Chromium 130-era build, OPFS SAHPool, n = 2000 rows, 500 point
+lookups, minimum of 3 repetitions, milliseconds. "Before" is the driver as of
+gomuks v26.09 (per-value bridge calls, WAL silently falling back to a rollback
+journal with normal locking); "after" is the batched bridge with statement
+cache and EXCLUSIVE locking + PERSIST journal.
+
+| Operation | before | after |
+|---|---|---|
+| insert 2000 rows in one transaction | 600 | 293 |
+| timeline select, 2000 rows | 155 | 45 |
+| 500 point lookups by unique key | 627 | 20 |
+
+In `memory` mode (no I/O, pure bridge cost) the same operations went from
+600 / 205 / 245 ms to 93 / 60 / 31 ms. The remaining OPFS insert cost is the
+actual file writes (~60 MB/s).
+
 ## Startup smoke test
 
 `smoke.mjs` serves a built `web/dist` in headless Chromium and checks that the
