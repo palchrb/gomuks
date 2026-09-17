@@ -42,6 +42,7 @@ import {
 	UserID,
 	UserProfile,
 } from "./types"
+import WasmClient from "./wasmclient.ts"
 
 export default class Client {
 	readonly state = new CachedEventDispatcher<ClientState>()
@@ -93,6 +94,14 @@ export default class Client {
 		})
 	}
 
+	// The IndexedDB room list cache is used in low bandwidth SSE mode and in
+	// the wasm build, where it lets the backend send a catchup sync instead
+	// of a full one.
+	#shouldLoadCache(): boolean {
+		return (this.store.preferences.low_bandwidth && this.rpc instanceof SSEClient)
+			|| this.rpc instanceof WasmClient
+	}
+
 	async #reallyStart(signal: AbortSignal) {
 		if (!await this.rpc.tryAuth(signal)) {
 			return
@@ -101,7 +110,7 @@ export default class Client {
 			return
 		}
 		console.log("Successfully authenticated, connecting to websocket")
-		if (this.store.preferences.low_bandwidth && this.rpc instanceof SSEClient) {
+		if (this.#shouldLoadCache()) {
 			await this.store.loadCache(signal)
 		}
 		if (signal.aborted) {
@@ -157,7 +166,7 @@ export default class Client {
 					return
 				}
 				console.log("Successfully authenticated, connecting to websocket")
-				if (this.store.preferences.low_bandwidth && this.rpc instanceof SSEClient) {
+				if (this.#shouldLoadCache()) {
 					await this.store.loadCache(signal)
 				}
 				if (signal.aborted) {
@@ -722,5 +731,7 @@ export default class Client {
 		await this.rpc.logout()
 		this.clearState()
 		localStorage.clear()
+		// The cached room list belongs to the account that just logged out.
+		await this.store.deleteCache().catch(err => console.warn("Failed to delete state cache", err))
 	}
 }

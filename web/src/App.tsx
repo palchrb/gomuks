@@ -23,6 +23,7 @@ import WasmClient from "./api/wasmclient.ts"
 import WSClient from "./api/wsclient.ts"
 import ClientContext from "./ui/ClientContext.ts"
 import MainScreen from "./ui/MainScreen.tsx"
+import StorageWarning from "./ui/StorageWarning.tsx"
 import { LoginScreen, VerificationScreen } from "./ui/login"
 import { LightboxWrapper, ModalContext, ModalWrapper, NestableModalContext } from "./ui/modal"
 import { useEventAsState } from "./util/eventdispatcher.ts"
@@ -67,6 +68,7 @@ function App() {
 	>
 		<div className="connection-error-inner">
 			<div>{connState.error} &#x1F63F;</div>
+			{!connState.reconnecting && <button onClick={() => window.location.reload()}>Reload</button>}
 			{connState.reconnecting && <div>
 				<ScaleLoader width="2rem" height="2rem" color="var(--primary-color)"/>
 				Reconnecting to backend...
@@ -104,6 +106,7 @@ function App() {
 			<LightboxWrapper>
 				<MainScreen/>
 			</LightboxWrapper>
+			{client.rpc instanceof WasmClient && <StorageWarning rpc={client.rpc}/>}
 			{errorOverlay}
 		</ClientContext>
 	}

@@ -395,3 +395,23 @@ a {
 .bidi-isolate {
 	unicode-bidi: isolate;
 }
+
+div.storage-warning {
+	position: fixed;
+	bottom: 0;
+	left: 0;
+	right: 0;
+	z-index: 90;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 1rem;
+	padding: .5rem 1rem;
+	background-color: var(--background-color);
+	border-top: 2px solid var(--error-color);
+	font-size: .9rem;
+
+	> button {
+		flex-shrink: 0;
+	}
+}

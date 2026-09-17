@@ -40,8 +40,22 @@ func (gmx *Gomuks) Logout(ctx context.Context) error {
 		log.Warn().Err(err).Msg("Failed to log out")
 		return err
 	}
+	oldClient := gmx.Client
 	gmx.Client = nil
 	log.Info().Msg("Logout complete, removing data")
+	if gmx.RemoveDataFunc != nil {
+		// Environments without a filesystem (wasm) remove their data themselves.
+		err = gmx.RemoveDataFunc(ctx, oldClient)
+		if err != nil {
+			log.Err(err).Msg("Failed to remove data")
+		}
+		log.Info().Msg("Restarting client")
+		gmx.StartClient()
+		gmx.Client.EventHandler(gmx.Client.State())
+		gmx.Client.EventHandler(gmx.Client.SyncStatus.Load())
+		log.Info().Msg("Client restarted")
+		return nil
+	}
 	err = os.RemoveAll(gmx.CacheDir)
 	if err != nil {
 		log.Err(err).Str("cache_dir", gmx.CacheDir).Msg("Failed to remove cache dir")

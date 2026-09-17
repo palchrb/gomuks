@@ -40,18 +40,31 @@ bc.addEventListener("message", evt => {
 	}
 })
 
+// If no tab with the wasm worker is open, nobody will ever answer the request.
+const MEDIA_REQUEST_TIMEOUT_MS = 30_000
+
 async function requestAndWaitForMedia(url) {
 	if (mediaPromises.has(url)) {
 		return mediaPromises.get(url).promise
 	}
-	let resolve
-	const promise = new Promise(innerResolve => {
+	let resolve, reject
+	const promise = new Promise((innerResolve, innerReject) => {
 		resolve = innerResolve
+		reject = innerReject
 	})
-	mediaPromises.set(url, {resolve, promise})
+	const timeout = setTimeout(() => {
+		mediaPromises.delete(url)
+		reject(new Error("Timed out waiting for the wasm worker to fetch media"))
+	}, MEDIA_REQUEST_TIMEOUT_MS)
+	mediaPromises.set(url, {resolve: () => {
+		clearTimeout(timeout)
+		resolve()
+	}, promise})
 	try {
 		bc.postMessage({type: "request", url})
 	} catch (err) {
+		clearTimeout(timeout)
+		mediaPromises.delete(url)
 		throw new Error("PostMessage failed")
 	}
 	return promise

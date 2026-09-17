@@ -13,9 +13,26 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import { CachedEventDispatcher } from "@/util/eventdispatcher.ts"
 import RPCClient, { ConnectionEvent } from "./rpc.ts"
 import type { BaseRPCCommand, MediaMessageEventContent, RPCCommand } from "./types"
 import WasmuksWorker from "./wasm/wasmuks.ts?worker"
+
+export interface StorageStatus {
+	// null if the browser doesn't expose the storage API
+	persisted: boolean | null
+	usage?: number
+	quota?: number
+}
+
+// Parameters passed to the worker via its name, read by cmd/wasmuks before it
+// starts syncing. Using the name instead of postMessage avoids a race with the
+// Go side registering its message listener.
+export interface WasmuksInit {
+	last_server_ts: number
+}
+
+const LOCK_NAME = "gomuks-wasm"
 
 interface WasmConnectionCommand extends BaseRPCCommand<ConnectionEvent> {
 	command: "wasm-connection"
@@ -27,16 +44,66 @@ interface RawJSONCommand extends BaseRPCCommand<string> {
 
 export default class WasmClient extends RPCClient {
 	public readonly rpcMediaUpload = true
+	public readonly storageStatus = new CachedEventDispatcher<StorageStatus>()
 	protected isConnected = true
 	#worker?: Worker
+	#releaseLock?: () => void
 
 	async start() {
-		this.#worker = new WasmuksWorker({ name: "gomuks-wasm-worker" })
+		// The OPFS SAH pool gives exclusive file handles to one worker, so a
+		// second tab would fail inside SQLite with an unhelpful error. Take a
+		// Web Lock before creating the worker (which installs the pool
+		// immediately) and explain the situation instead.
+		if (!await this.#acquireLock()) {
+			this.connect.emit({
+				connected: false,
+				reconnecting: false,
+				error: "gomuks is already open in another tab. Close it, then reload this page.",
+			})
+			return
+		}
+		const init: WasmuksInit = {
+			last_server_ts: this.getCachedServerTimestamp?.() ?? 0,
+		}
+		this.#worker = new WasmuksWorker({ name: JSON.stringify(init) })
 		this.#worker.addEventListener("message", this.#onMessage)
-		navigator.storage.persist().then(res => console.info("Storage persistence permission:", res))
+		this.#checkStorage().catch(err => console.warn("Failed to check storage status", err))
 		navigator.serviceWorker.register("wasmuks-media-sw.js").then(reg => {
 			console.info("Media service worker registered", reg)
 		}).catch(err => console.error("Failed to register media service worker", err))
+	}
+
+	#acquireLock(): Promise<boolean> {
+		if (!navigator.locks) {
+			return Promise.resolve(true)
+		}
+		return new Promise(resolve => {
+			navigator.locks.request(LOCK_NAME, { ifAvailable: true }, lock => {
+				if (!lock) {
+					resolve(false)
+					return
+				}
+				resolve(true)
+				// Hold the lock until stop() releases it.
+				return new Promise<void>(release => {
+					this.#releaseLock = release
+				})
+			}).catch(err => {
+				console.warn("Web Locks request failed, continuing without lock", err)
+				resolve(true)
+			})
+		})
+	}
+
+	async #checkStorage() {
+		if (!navigator.storage?.persist) {
+			this.storageStatus.emit({ persisted: null })
+			return
+		}
+		const persisted = await navigator.storage.persist()
+		const estimate = await navigator.storage.estimate()
+		console.info("Storage persistence:", persisted, "usage:", estimate.usage, "quota:", estimate.quota)
+		this.storageStatus.emit({ persisted, usage: estimate.usage, quota: estimate.quota })
 	}
 
 	async doAuth(): Promise<void> {}
@@ -85,6 +152,8 @@ export default class WasmClient extends RPCClient {
 	async stop() {
 		this.#worker?.terminate()
 		this.#worker = undefined
+		this.#releaseLock?.()
+		this.#releaseLock = undefined
 	}
 
 	protected send(data: RPCCommand) {

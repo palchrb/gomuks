@@ -78,7 +78,12 @@ type Gomuks struct {
 	stopChan chan struct{}
 
 	EventBuffer *EventBuffer
-	execBuffer  *ExecutionBuffer[json.RawMessage, *mautrix.RespError]
+
+	// RemoveDataFunc replaces the filesystem-based data removal in Logout
+	// for environments that store data elsewhere (the wasm build uses OPFS).
+	// The client passed in has already been stopped and its database closed.
+	RemoveDataFunc func(ctx context.Context, client *hicli.HiClient) error
+	execBuffer     *ExecutionBuffer[json.RawMessage, *mautrix.RespError]
 
 	// Maps from temporary MXC URIs from by the media repository for URL
 	// previews to permanent MXC URIs suitable for sending in an inline preview

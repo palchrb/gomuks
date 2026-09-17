@@ -118,6 +118,74 @@ func runMigrations() error {
 	return hicli.UpgradeDatabases(log.WithContext(context.Background()), rawDB, nil, log, gmx.PickleKey())
 }
 
+// wasmuksInit mirrors WasmuksInit in web/src/api/wasmclient.ts. It's passed
+// as the worker's name so it's available before Go starts, without a
+// message-ordering race.
+type wasmuksInit struct {
+	LastServerTS int64 `json:"last_server_ts"`
+}
+
+func readInit() (init wasmuksInit) {
+	name := js.Global().Get("name")
+	if name.Type() != js.TypeString || name.String() == "" {
+		return
+	}
+	if err := json.Unmarshal([]byte(name.String()), &init); err != nil {
+		gmx.Log.Warn().Err(err).Msg("Failed to parse worker init parameters")
+	}
+	return
+}
+
+// awaitPromise blocks the goroutine until a JS promise settles.
+func awaitPromise(promise js.Value) (js.Value, error) {
+	done := make(chan struct{})
+	var result js.Value
+	var rejected bool
+	then := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) > 0 {
+			result = args[0]
+		}
+		close(done)
+		return nil
+	})
+	catch := js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) > 0 {
+			result = args[0]
+		}
+		rejected = true
+		close(done)
+		return nil
+	})
+	defer then.Release()
+	defer catch.Release()
+	promise.Call("then", then, catch)
+	<-done
+	if rejected {
+		return result, fmt.Errorf("promise rejected: %s", result.String())
+	}
+	return result, nil
+}
+
+// removeData wipes everything the worker stored: the OPFS database files and
+// the decrypted media cache. The main thread clears IndexedDB and
+// localStorage itself when the logout call returns.
+func removeData(ctx context.Context, _ *hicli.HiClient) error {
+	log := zerolog.Ctx(ctx)
+	poolUtil := js.Global().Get("sqlite3").Get("PoolUtil")
+	if _, err := awaitPromise(poolUtil.Call("wipeFiles")); err != nil {
+		return fmt.Errorf("failed to wipe OPFS files: %w", err)
+	}
+	log.Info().Msg("Wiped OPFS database files")
+	if caches := js.Global().Get("caches"); caches.Type() == js.TypeObject {
+		if _, err := awaitPromise(caches.Call("delete", "wasmuks-media-v1")); err != nil {
+			log.Warn().Err(err).Msg("Failed to delete media cache")
+		} else {
+			log.Info().Msg("Deleted media cache")
+		}
+	}
+	return nil
+}
+
 func main() {
 	hicli.InitialDeviceDisplayName = "gomuks web"
 	gmx = gomuks.NewGomuks()
@@ -144,6 +212,7 @@ func main() {
 	// while inside DoTxn" bug into a hang, so make dbutil panic instead.
 	dbutil.ForceDeadlockDetection = true
 
+	gmx.RemoveDataFunc = removeData
 	gmx.EventBuffer = gomuks.NewEventBuffer(0)
 	gmx.EventBuffer.Subscribe(0, nil, func(evt *gomuks.BufferedEvent) {
 		postMessage(evt.Command, evt.RequestID, evt.Data)
@@ -174,8 +243,11 @@ func main() {
 	postMessage(jsoncmd.EventSyncStatus, 0, gmx.Client.SyncStatus.Load())
 	if gmx.Client.IsLoggedInAndVerified() {
 		ctx := gmx.Log.WithContext(context.Background())
-		// TODO allow catchup sync?
-		for payload := range gmx.Client.GetInitialSync(ctx, 100, 0) {
+		init := readInit()
+		// If the frontend restored its room list from IndexedDB, only send
+		// what changed since then (same as the websocket path does).
+		gmx.Log.Info().Int64("catchup_since", init.LastServerTS).Msg("Sending initial sync")
+		for payload := range gmx.Client.GetInitialSync(ctx, 100, init.LastServerTS) {
 			postMessage(jsoncmd.EventSyncComplete, 0, payload)
 		}
 		postMessage(jsoncmd.EventInitComplete, 0, gmx.Client.SyncStatus.Load())
