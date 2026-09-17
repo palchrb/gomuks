@@ -19,11 +19,14 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"runtime/debug"
 	"syscall/js"
+	"time"
 
 	"github.com/rs/zerolog"
 	"go.mau.fi/util/dbutil"
@@ -83,11 +86,38 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 		}()
 		return nil
 	}
+	if wrappedCmd.Command == jsoncmd.ReqRestoreKeyBackup {
+		// The native server streams this over an HTTP endpoint; in wasm the
+		// progress goes out as events and the final state as the response.
+		go func() {
+			ctx := gmx.Log.With().Str("action", "restore key backup").Logger().WithContext(context.Background())
+			resp, err := jsoncmd.RestoreKeyBackup.RunCtx(ctx, wrappedCmd.Data, restoreKeyBackup)
+			if err != nil {
+				postMessage(jsoncmd.RespError, wrappedCmd.RequestID, ptr.Ptr(gomuks.ToRespError(err)))
+			} else {
+				postMessage(jsoncmd.RespSuccess, wrappedCmd.RequestID, resp)
+			}
+		}()
+		return nil
+	}
 	go func() {
 		resp := gmx.Client.SubmitJSONCommand(context.Background(), wrappedCmd)
 		postMessage(resp.Command, resp.RequestID, resp.Data)
 	}()
 	return nil
+}
+
+func restoreKeyBackup(ctx context.Context, params *jsoncmd.RestoreKeyBackupParams) (*jsoncmd.KeyBackupRestoreProgress, error) {
+	var last jsoncmd.KeyBackupRestoreProgress
+	err := gmx.Client.RestoreKeyBackup(ctx, params.RoomID, func(progress jsoncmd.KeyBackupRestoreProgress) {
+		last = progress
+		postMessage(jsoncmd.EventKeyBackupRestoreProgress, 0, &progress)
+	})
+	if err != nil {
+		return nil, err
+	}
+	last.Stage = "done"
+	return &last, nil
 }
 
 // runMigrations runs schema migrations on a throwaway multi-connection pool
@@ -123,6 +153,37 @@ func runMigrations() error {
 // message-ordering race.
 type wasmuksInit struct {
 	LastServerTS int64 `json:"last_server_ts"`
+	// From the "wasm" section of config.json, see docs/wasmuks.md.
+	SingleConnection     *bool `json:"single_connection,omitempty"`
+	MemoryLimitMB        int   `json:"memory_limit_mb,omitempty"`
+	InitialTimelineLimit int   `json:"initial_timeline_limit,omitempty"`
+}
+
+const (
+	defaultMemoryLimitMB        = 512
+	defaultInitialTimelineLimit = 20
+)
+
+var initParams wasmuksInit
+
+func singleConnection() bool {
+	return initParams.SingleConnection == nil || *initParams.SingleConnection
+}
+
+// logMemStats periodically logs Go heap statistics so memory use is visible
+// in the browser console without a profiler.
+func logMemStats() {
+	var stats runtime.MemStats
+	for {
+		time.Sleep(30 * time.Second)
+		runtime.ReadMemStats(&stats)
+		gmx.Log.Debug().
+			Uint64("heap_alloc_mb", stats.HeapAlloc>>20).
+			Uint64("heap_sys_mb", stats.HeapSys>>20).
+			Uint64("total_alloc_mb", stats.TotalAlloc>>20).
+			Uint32("num_gc", stats.NumGC).
+			Msg("Memory stats")
+	}
 }
 
 func readInit() (init wasmuksInit) {
@@ -197,17 +258,35 @@ func main() {
 			Timestamp: ptr.Ptr(false),
 		},
 	}
+	initParams = readInit()
 	// The driver defaults to EXCLUSIVE locking + PERSIST journal on OPFS,
-	// which requires that only one connection uses the file. See
-	// pkg/sqlite-wasm-js/conn.go for why.
+	// which requires that only one connection uses the file (see
+	// pkg/sqlite-wasm-js/conn.go). That's fastest per query, but every read
+	// waits for in-progress write transactions. config.json can switch to a
+	// multi-connection pool with normal locking for comparison.
 	gmx.GetDBConfig = func() dbutil.PoolConfig {
+		if singleConnection() {
+			return dbutil.PoolConfig{
+				Type:         "sqlite-wasm-js",
+				URI:          "file:/gomuks.db?_txlock=immediate",
+				MaxOpenConns: 1,
+				MaxIdleConns: 1,
+			}
+		}
 		return dbutil.PoolConfig{
 			Type:         "sqlite-wasm-js",
-			URI:          "file:/gomuks.db?_txlock=immediate",
-			MaxOpenConns: 1,
+			URI:          "file:/gomuks.db?_txlock=immediate&_locking_mode=NORMAL&_journal_mode=DELETE",
+			MaxOpenConns: 5,
 			MaxIdleConns: 1,
 		}
 	}
+	// Go's GC otherwise lets the heap grow to twice the live size, which
+	// on top of V8's compiled code for a 30 MB module is too much for small
+	// client machines. A soft limit makes the GC work harder near it.
+	memoryLimitMB := cmp.Or(initParams.MemoryLimitMB, defaultMemoryLimitMB)
+	debug.SetMemoryLimit(int64(memoryLimitMB) << 20)
+	debug.SetGCPercent(50)
+	go logMemStats()
 	// A pool with one connection turns any "query outside the transaction
 	// while inside DoTxn" bug into a hang, so make dbutil panic instead.
 	dbutil.ForceDeadlockDetection = true
@@ -241,7 +320,13 @@ func main() {
 		postMessage("wasm-connection", 0, json.RawMessage(`{"connected":false,"reconnecting":false,"error":"Database migration failed"}`))
 		return
 	}
-	gmx.Client.SingleConnectionDB = true
+	gmx.Client.SingleConnectionDB = singleConnection()
+	gmx.Client.InitialSyncTimelineLimit = cmp.Or(initParams.InitialTimelineLimit, defaultInitialTimelineLimit)
+	gmx.Log.Info().
+		Bool("single_connection", gmx.Client.SingleConnectionDB).
+		Int("memory_limit_mb", memoryLimitMB).
+		Int("initial_timeline_limit", gmx.Client.InitialSyncTimelineLimit).
+		Msg("wasm configuration")
 	gmx.StartClient()
 	if stats := gmx.Client.DB.RawDB.Stats(); stats.InUse > 0 {
 		gmx.Log.Error().Int("in_use", stats.InUse).Msg("Database connections still in use after startup, expect hangs")
@@ -251,11 +336,10 @@ func main() {
 	postMessage(jsoncmd.EventSyncStatus, 0, gmx.Client.SyncStatus.Load())
 	if gmx.Client.IsLoggedInAndVerified() {
 		ctx := gmx.Log.WithContext(context.Background())
-		init := readInit()
 		// If the frontend restored its room list from IndexedDB, only send
 		// what changed since then (same as the websocket path does).
-		gmx.Log.Info().Int64("catchup_since", init.LastServerTS).Msg("Sending initial sync")
-		for payload := range gmx.Client.GetInitialSync(ctx, 100, init.LastServerTS) {
+		gmx.Log.Info().Int64("catchup_since", initParams.LastServerTS).Msg("Sending initial sync")
+		for payload := range gmx.Client.GetInitialSync(ctx, 100, initParams.LastServerTS) {
 			postMessage(jsoncmd.EventSyncComplete, 0, payload)
 		}
 		postMessage(jsoncmd.EventInitComplete, 0, gmx.Client.SyncStatus.Load())

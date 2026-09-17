@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go.mau.fi/gomuks/pkg/hicli/jsoncmd"
 	"slices"
 	"time"
 
@@ -113,18 +114,7 @@ func (h *HiClient) uploadKeyBackupBatch(ctx context.Context, version id.KeyBacku
 	return err
 }
 
-type KeyBackupRestoreProgress struct {
-	CurrentRoomID id.RoomID `json:"current_room_id"`
-	Stage         string    `json:"stage"`
-
-	Decrypted        int `json:"decrypted"`
-	DecryptionFailed int `json:"decryption_failed"`
-	ImportFailed     int `json:"import_failed"`
-	Saved            int `json:"saved"`
-	PostProcessed    int `json:"post_processed"`
-
-	Total int `json:"total"`
-}
+type KeyBackupRestoreProgress = jsoncmd.KeyBackupRestoreProgress
 
 type keyBackupEntry struct {
 	RoomID    id.RoomID
@@ -220,6 +210,13 @@ func (h *HiClient) RestoreKeyBackup(
 	log.Debug().Any("progress", progress).Msg("Finished decrypting key backup, storing entries")
 	progress.Stage = "saving"
 	progressCallback(progress)
+	saveStart := time.Now()
+	defer func() {
+		log.Debug().
+			Dur("save_duration", time.Since(saveStart)).
+			Int("sessions", len(entries)).
+			Msg("Key backup restore finished")
+	}()
 	for chunk := range slices.Chunk(entries, persistChunkSize) {
 		persistChunk := func(ctx context.Context) error {
 			for _, entry := range chunk {

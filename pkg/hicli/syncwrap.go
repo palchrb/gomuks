@@ -7,6 +7,7 @@
 package hicli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -48,6 +49,16 @@ func (h *hiSyncer) ProcessResponse(ctx context.Context, resp *mautrix.RespSync, 
 		}})
 	}
 	hasEncrypted := c.preProcessSyncResponse(ctx, resp)
+	txnStart := time.Now()
+	defer func() {
+		if dur := time.Since(txnStart); dur > 500*time.Millisecond {
+			zerolog.Ctx(ctx).Debug().
+				Dur("duration", dur).
+				Int("joined_rooms", len(resp.Rooms.Join)).
+				Bool("initial", since == "").
+				Msg("Slow sync processing")
+		}
+	}()
 	for i := 0; ; i++ {
 		doProcessTxn := func(ctx context.Context) error {
 			return c.DB.DoTxn(ctx, nil, func(ctx context.Context) error {
@@ -115,7 +126,7 @@ func (h *hiSyncer) GetFilterJSON(_ id.UserID) *mautrix.Filter {
 				LazyLoadMembers: true,
 			},
 			Timeline: &mautrix.FilterPart{
-				Limit:           100,
+				Limit:           cmp.Or(h.InitialSyncTimelineLimit, 100),
 				LazyLoadMembers: true,
 			},
 		},

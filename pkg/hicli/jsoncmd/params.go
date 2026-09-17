@@ -427,6 +427,11 @@ type ExportKeysParams struct {
 	RoomID     id.RoomID `json:"room_id,omitempty"`
 }
 
+type RestoreKeyBackupParams struct {
+	// If set, only keys for this room are restored.
+	RoomID id.RoomID `json:"room_id,omitempty"`
+}
+
 type RerequestSessionParams struct {
 	RoomID    id.RoomID    `json:"room_id"`
 	SessionID id.SessionID `json:"session_id"`

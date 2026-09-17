@@ -33,6 +33,8 @@ func EventTypeName(evt any) Name {
 		return EventClientState
 	case *InitComplete:
 		return EventInitComplete
+	case *KeyBackupRestoreProgress:
+		return EventKeyBackupRestoreProgress
 	default:
 		panic(fmt.Errorf("unknown event type %T", evt))
 	}
@@ -194,4 +196,17 @@ type RunData struct {
 	VAPIDKey string `json:"vapid_key"`
 	// ListenerID is an ID used to acknowledge events received via server-sent events.
 	ListenerID uint64 `json:"listener_id,omitempty"`
+}
+
+type KeyBackupRestoreProgress struct {
+	CurrentRoomID id.RoomID `json:"current_room_id"`
+	Stage         string    `json:"stage"`
+
+	Decrypted        int `json:"decrypted"`
+	DecryptionFailed int `json:"decryption_failed"`
+	ImportFailed     int `json:"import_failed"`
+	Saved            int `json:"saved"`
+	PostProcessed    int `json:"post_processed"`
+
+	Total int `json:"total"`
 }

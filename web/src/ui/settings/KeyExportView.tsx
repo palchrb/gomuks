@@ -17,6 +17,7 @@ import { use, useState } from "react"
 import { RoomStateStore } from "@/api/statestore"
 import { KeyRestoreProgress, RoomID } from "@/api/types"
 import { NonNullCachedEventDispatcher, useEventAsState } from "@/util/eventdispatcher.ts"
+import ClientContext from "../ClientContext.ts"
 import { ModalContext } from "../modal"
 
 export interface KeyRestoreStatus {
@@ -82,12 +83,8 @@ const KeyExportView = ({ room }: KeyExportViewProps) => {
 	const [passphrase, setPassphrase] = useState("")
 	const [hasFile, setHasFile] = useState(false)
 	const openModal = use(ModalContext)
+	const client = use(ClientContext)!
 	const importBackup = (roomID?: RoomID) => {
-		let path = "_gomuks/keys/restorebackup"
-		if (roomID) {
-			path += `/${encodeURIComponent(roomID)}`
-		}
-		const evtSource = new EventSource(path)
 		let progress: KeyRestoreProgress = {
 			stage: "fetching",
 			current_room_id: "",
@@ -103,6 +100,34 @@ const KeyExportView = ({ room }: KeyExportViewProps) => {
 			progress,
 			connected,
 		})
+		const showModal = () => openModal({
+			dimmed: true,
+			boxed: true,
+			content: <KeyRestoreProgressModal evt={disp}/>,
+			innerBoxClass: "key-restore-modal",
+			boxClass: "key-restore-modal-wrapper",
+		})
+		if (client.rpc.rpcKeyRestore) {
+			// No HTTP server in the wasm build: progress arrives as RPC events.
+			const unlisten = client.rpc.event.listen(evt => {
+				if (evt.command === "key_backup_restore_progress") {
+					progress = evt.data
+					connected = true
+					disp.emit({ progress, connected })
+				}
+			})
+			client.rpc.restoreKeyBackup(roomID).then(
+				final => disp.emit({ progress: final, connected: true, done: "ok" }),
+				err => disp.emit({ progress, connected, done: `${err}`.replace(/^Error: /, "") }),
+			).finally(unlisten)
+			showModal()
+			return
+		}
+		let path = "_gomuks/keys/restorebackup"
+		if (roomID) {
+			path += `/${encodeURIComponent(roomID)}`
+		}
+		const evtSource = new EventSource(path)
 		evtSource.addEventListener("progress", evt => {
 			progress = JSON.parse(evt.data)
 			connected = true
@@ -122,13 +147,7 @@ const KeyExportView = ({ room }: KeyExportViewProps) => {
 			}
 			evtSource.close()
 		})
-		openModal({
-			dimmed: true,
-			boxed: true,
-			content: <KeyRestoreProgressModal evt={disp}/>,
-			innerBoxClass: "key-restore-modal",
-			boxClass: "key-restore-modal-wrapper",
-		})
+		showModal()
 	}
 	return <div className="key-export">
 		<h3>Key export/import</h3>

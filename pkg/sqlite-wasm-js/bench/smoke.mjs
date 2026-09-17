@@ -12,7 +12,10 @@ const types = {
 	".html": "text/html", ".js": "text/javascript", ".wasm": "application/wasm", ".json": "application/json",
 	".css": "text/css", ".png": "image/png", ".svg": "image/svg+xml",
 }
-const configJSON = { preferences: { show_membership_events: false, bogus_key: 1, display_read_receipts: "no" } }
+const configJSON = {
+	preferences: { show_membership_events: false, bogus_key: 1, display_read_receipts: "no" },
+	wasm: { memory_limit_mb: 256, initial_timeline_limit: 10, single_connection: true },
+}
 
 const server = http.createServer((req, res) => {
 	const url = new URL(req.url, "http://x")
@@ -69,6 +72,8 @@ check(state.receipts === true, "config.json value with wrong type ignored")
 check(typeof state.storage?.persisted === "boolean" || state.storage?.persisted === null, "storage status reported")
 check(logs.some(l => /Initialization complete/.test(l)), "backend logged initialization complete")
 check(!logs.some(l => /panic|pageerror|deadlock/i.test(l)), "no panics or page errors")
+check(logs.some(l => /wasm configuration.*memory_limit_mb: 256.*initial_timeline_limit: 10/.test(l)),
+	"config.json wasm section reached the backend")
 check(logs.some(l => /Generated new pickle key/.test(l)), "fresh install generated a pickle key")
 check(!logs.some(l => /No pickle key provided/.test(l)), "backend received the pickle key")
 

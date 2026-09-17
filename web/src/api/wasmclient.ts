@@ -30,6 +30,44 @@ export interface StorageStatus {
 // Go side registering its message listener.
 export interface WasmuksInit {
 	last_server_ts: number
+	// From the "wasm" section of config.json, see docs/wasmuks.md.
+	single_connection?: boolean
+	memory_limit_mb?: number
+	initial_timeline_limit?: number
+}
+
+// Reads the "wasm" section of config.json next to index.html. Preferences in
+// the same file are handled by the state store; this only picks up the
+// backend tuning knobs, validated by type.
+async function loadWasmConfig(): Promise<Partial<WasmuksInit>> {
+	try {
+		const resp = await fetch("config.json", { cache: "no-cache" })
+		if (!resp.ok) {
+			return {}
+		}
+		const config = await resp.json() as { wasm?: Record<string, unknown> }
+		const wasm = config?.wasm
+		if (!wasm || typeof wasm !== "object") {
+			return {}
+		}
+		const out: Partial<WasmuksInit> = {}
+		if (typeof wasm.single_connection === "boolean") {
+			out.single_connection = wasm.single_connection
+		}
+		if (typeof wasm.memory_limit_mb === "number" && wasm.memory_limit_mb > 0) {
+			out.memory_limit_mb = Math.floor(wasm.memory_limit_mb)
+		}
+		if (typeof wasm.initial_timeline_limit === "number" && wasm.initial_timeline_limit > 0) {
+			out.initial_timeline_limit = Math.floor(wasm.initial_timeline_limit)
+		}
+		if (Object.keys(out).length) {
+			console.info("Loaded wasm config:", out)
+		}
+		return out
+	} catch (err) {
+		console.warn("Failed to load config.json wasm section", err)
+		return {}
+	}
 }
 
 const LOCK_NAME = "gomuks-wasm"
@@ -44,6 +82,7 @@ interface RawJSONCommand extends BaseRPCCommand<string> {
 
 export default class WasmClient extends RPCClient {
 	public readonly rpcMediaUpload = true
+	public readonly rpcKeyRestore = true
 	public readonly storageStatus = new CachedEventDispatcher<StorageStatus>()
 	protected isConnected = true
 	#worker?: Worker
@@ -63,6 +102,7 @@ export default class WasmClient extends RPCClient {
 			return
 		}
 		const init: WasmuksInit = {
+			...await loadWasmConfig(),
 			last_server_ts: this.getCachedServerTimestamp?.() ?? 0,
 		}
 		this.#worker = new WasmuksWorker({ name: JSON.stringify(init) })
@@ -96,14 +136,26 @@ export default class WasmClient extends RPCClient {
 	}
 
 	async #checkStorage() {
+		await this.requestPersistentStorage()
+	}
+
+	// Asks the browser to make this origin's storage persistent. Firefox shows
+	// a prompt; Chrome decides silently based on engagement, installation,
+	// bookmarks and notification permission, so this is worth repeating after
+	// those change. Safari only grants it to home screen apps.
+	async requestPersistentStorage(): Promise<boolean | null> {
 		if (!navigator.storage?.persist) {
 			this.storageStatus.emit({ persisted: null })
-			return
+			return null
+		}
+		if (this.storageStatus.current?.persisted === true) {
+			return true
 		}
 		const persisted = await navigator.storage.persist()
 		const estimate = await navigator.storage.estimate()
 		console.info("Storage persistence:", persisted, "usage:", estimate.usage, "quota:", estimate.quota)
 		this.storageStatus.emit({ persisted, usage: estimate.usage, quota: estimate.quota })
+		return persisted
 	}
 
 	async doAuth(): Promise<void> {}

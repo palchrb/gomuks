@@ -113,6 +113,9 @@ const (
 	ReqDownloadMedia  Name = "download_media"
 	ReqGetURLPreview  Name = "get_url_preview"
 	ReqExportKeys     Name = "export_keys"
+	// ReqRestoreKeyBackup is handled by the wasm build only; the native
+	// server exposes the same operation as a server-sent events HTTP endpoint.
+	ReqRestoreKeyBackup Name = "restore_key_backup"
 
 	RespError   Name = "error"
 	RespSuccess Name = "response"
@@ -129,6 +132,8 @@ const (
 	EventImageAuthToken  Name = "image_auth_token"
 	EventInitComplete    Name = "init_complete"
 	EventRunID           Name = "run_id"
+
+	EventKeyBackupRestoreProgress Name = "key_backup_restore_progress"
 )
 
 // Frontend -> backend request specs
@@ -348,6 +353,9 @@ var (
 	// ExportKeys exports megolm room keys and returns the exported file as a string.
 	// This is only available in the C FFI. HTTP clients must use the /keys/export API.
 	ExportKeys = &CommandSpec[*ExportKeysParams, string]{Name: ReqExportKeys}
+	// RestoreKeyBackup fetches megolm room keys from the server-side key backup and stores them locally.
+	// Progress is reported with `key_backup_restore_progress` events; the response contains the final progress.
+	RestoreKeyBackup = &CommandSpec[*RestoreKeyBackupParams, *KeyBackupRestoreProgress]{Name: ReqRestoreKeyBackup}
 )
 
 // Backend -> frontend event specs
@@ -368,6 +376,8 @@ var (
 	SpecClientState = &EventSpec[*ClientState]{Name: EventClientState}
 	// SpecInitComplete is emitted after all post-connect payloads have been dispatched.
 	SpecInitComplete = &EventSpec[InitComplete]{Name: EventInitComplete}
+	// SpecKeyBackupRestoreProgress is emitted while a `restore_key_backup` request is running.
+	SpecKeyBackupRestoreProgress = &EventSpec[*KeyBackupRestoreProgress]{Name: EventKeyBackupRestoreProgress}
 )
 
 // Websocket-specific backend -> frontend event specs
@@ -452,11 +462,13 @@ var AllNames = []Name{
 	ReqDownloadMedia,
 	ReqGetURLPreview,
 	ReqExportKeys,
+	ReqRestoreKeyBackup,
 	RespError,
 	RespSuccess,
 	ReqPing,
 	RespPong,
 	EventSyncComplete,
+	EventKeyBackupRestoreProgress,
 	EventSyncStatus,
 	EventEventsDecrypted,
 	EventTyping,

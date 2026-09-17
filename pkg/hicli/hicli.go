@@ -71,6 +71,11 @@ type HiClient struct {
 	// a connection (pagination, background decryption) can't deadlock with a
 	// sync transaction that holds the only connection and waits for the lock.
 	SingleConnectionDB bool
+	// InitialSyncTimelineLimit is the timeline limit in the sync filter,
+	// i.e. how many events per room the initial sync returns. Lower values
+	// make the initial sync response (which is held in memory in full)
+	// much smaller; older history is paginated on demand. 0 means 100.
+	InitialSyncTimelineLimit int
 
 	firstSyncReceived     bool
 	sendInitSyncToClients bool

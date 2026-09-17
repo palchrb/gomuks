@@ -21,6 +21,7 @@ import {
 	DBRoomAccountData,
 	DBSpaceEdge,
 	EventRowID,
+	KeyRestoreProgress,
 	RawDBEvent,
 	TimelineRowTuple,
 } from "./hitypes.ts"
@@ -167,6 +168,10 @@ export interface RunIDEvent extends BaseRPCCommand<RunData> {
 	command: "run_id"
 }
 
+export interface KeyBackupRestoreProgressEvent extends BaseRPCCommand<KeyRestoreProgress> {
+	command: "key_backup_restore_progress"
+}
+
 export interface ResponseCommand extends BaseRPCCommand<unknown> {
 	command: "response"
 }
@@ -188,6 +193,7 @@ export type RPCEvent =
 	SyncCompleteEvent |
 	ImageAuthTokenEvent |
 	InitCompleteEvent |
-	RunIDEvent
+	RunIDEvent |
+	KeyBackupRestoreProgressEvent
 
 export type RPCCommand = RPCEvent | ResponseCommand | ErrorCommand | PingCommand

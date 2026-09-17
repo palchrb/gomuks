@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"go.mau.fi/util/exerrors"
 
@@ -57,7 +58,11 @@ func (h *HiClient) SubmitJSONCommand(ctx context.Context, req *JSONCommand) *JSO
 		h.jsonRequests[req.RequestID] = cancel
 		h.jsonRequestsLock.Unlock()
 	}
+	start := time.Now()
 	resp, err := h.handleJSONCommand(ctx, req)
+	if dur := time.Since(start); dur > 200*time.Millisecond {
+		log.Debug().Dur("duration", dur).Msg("Slow command")
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			causeErr := context.Cause(ctx)

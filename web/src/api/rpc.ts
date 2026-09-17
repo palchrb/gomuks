@@ -26,6 +26,7 @@ import {
 	GetOwnDevicesResponse,
 	GetProfileResponse,
 	JSONValue,
+	KeyRestoreProgress,
 	LocalSearchParams,
 	LoginFlowsResponse,
 	LoginRequest,
@@ -102,6 +103,8 @@ export default abstract class RPCClient {
 	public readonly connect: CachedEventDispatcher<ConnectionEvent> = new CachedEventDispatcher()
 	public readonly event: EventDispatcher<RPCEvent> = new EventDispatcher()
 	public readonly rpcMediaUpload: boolean = false
+	// Whether key backup restore is available as an RPC command (wasm) instead of an HTTP endpoint.
+	public readonly rpcKeyRestore: boolean = false
 	public getCachedServerTimestamp?: () => number | undefined
 	protected readonly pendingRequests: Map<number, {
 		resolve: (data: unknown) => void,
@@ -207,6 +210,10 @@ export default abstract class RPCClient {
 
 	logout(): Promise<void> {
 		return this.request("logout", {})
+	}
+
+	restoreKeyBackup(room_id?: RoomID): Promise<KeyRestoreProgress> {
+		return this.request("restore_key_backup", { room_id })
 	}
 
 	sendMessage(params: SendMessageParams): Promise<RawDBEvent | null> {
