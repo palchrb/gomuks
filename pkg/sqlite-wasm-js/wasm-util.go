@@ -10,7 +10,6 @@ package sqlite_wasm_js
 
 import (
 	"fmt"
-	"runtime/debug"
 )
 
 type jsError struct {
@@ -32,17 +31,11 @@ func (e jsError) Error() string {
 	return fmt.Sprintf("%v", e.val)
 }
 
+// catchIntoError converts a panic from syscall/js (a thrown JS exception)
+// into an error. SQLite result codes never come through here: the JS side
+// reports them in the result buffer so they become *Error values.
 func catchIntoError(into *error) {
 	if r := recover(); r != nil {
-		fmt.Println("MEOW 3:<", r)
-		fmt.Println(string(debug.Stack()))
 		*into = jsError{val: r}
-	}
-}
-
-func catchIntoErrorFmt(into *error, format string, args ...any) {
-	if r := recover(); r != nil {
-		args = append(args, jsError{val: r})
-		*into = fmt.Errorf(format, args...)
 	}
 }

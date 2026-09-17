@@ -13,13 +13,10 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"reflect"
-	"strconv"
 	"strings"
 	"syscall/js"
 	"time"
 	"unsafe"
-
-	"go.mau.fi/util/exstrings"
 )
 
 type Stmt struct {
@@ -27,6 +24,14 @@ type Stmt struct {
 	c *Conn
 
 	cptr js.Value
+
+	numInput int
+
+	// Column names and declared types, fetched with the first query result
+	// and cached for the lifetime of the statement.
+	colsLoaded bool
+	cols       []string
+	decls      []string
 }
 
 var (
@@ -44,132 +49,78 @@ func (s *Stmt) Close() error {
 }
 
 func (s *Stmt) NumInput() int {
-	return s.d.CAPI.Call("sqlite3_bind_parameter_count", s.cptr).Int()
-}
-
-var bigInt = js.Global().Get("BigInt")
-
-const maxSafeJSInt = 1<<53 - 1
-const minSafeJSInt = -maxSafeJSInt
-
-func safeInt(val js.Value) int {
-	if val.IsUndefined() {
-		return 0
+	if s.numInput == 0 {
+		s.numInput = s.d.CAPI.Call("sqlite3_bind_parameter_count", s.cptr).Int() + 1
 	}
-	return val.Int()
+	return s.numInput - 1
 }
 
-func (s *Stmt) bindNil(_ context.Context, index int) error {
-	rc := safeInt(s.d.CAPI.Call("sqlite3_bind_null", s.cptr, index))
-	if rc != SQLITE_OK {
-		return s.d.MakeError(s.c, "sqlite3_bind_null", rc)
-	}
-	return nil
-}
+const sqliteTimeFormat = "2006-01-02 15:04:05.999999999-07:00"
 
-func (s *Stmt) bindBytes(funcName string, index int, value []byte) js.Value {
-	ptr := s.d.WASM.Call("alloc", max(len(value), 1))
-	if len(value) > 0 {
-		heap8u := s.d.WASM.Call("heap8u").Call("subarray", ptr.Int(), ptr.Int()+len(value))
-		js.CopyBytesToJS(heap8u, value)
-	}
-	return s.d.CAPI.Call(funcName, s.cptr, index, ptr, len(value), SQLITE_WASM_DEALLOC)
-}
-
-func (s *Stmt) bindNonPointerValue(_ context.Context, index int, val any) error {
-	var rc js.Value
-	var funcName string
+// encodeValue appends one parameter to the connection's parameter buffer.
+func (s *Stmt) encodeValue(index int, val any) error {
+	enc := &s.c.params
 	switch typedVal := val.(type) {
+	case nil:
+		enc.null(index)
 	case string:
-		funcName = "sqlite3_bind_text"
-		rc = s.bindBytes(funcName, index, exstrings.UnsafeBytes(typedVal))
+		enc.text(index, typedVal)
 	case []byte:
-		funcName = "sqlite3_bind_blob"
-		rc = s.bindBytes(funcName, index, typedVal)
-	case float32, float64:
-		funcName = "sqlite3_bind_double"
-		rc = s.d.CAPI.Call(funcName, s.cptr, index, typedVal)
+		enc.blob(index, typedVal)
+	case float32:
+		enc.float64(index, float64(typedVal))
+	case float64:
+		enc.float64(index, typedVal)
 	case bool:
-		realVal := 0
 		if typedVal {
-			realVal = 1
+			enc.int64(index, 1)
+		} else {
+			enc.int64(index, 0)
 		}
-		funcName = "sqlite3_bind_int"
-		rc = s.d.CAPI.Call(funcName, s.cptr, index, realVal)
 	case int64:
-		funcName = "sqlite3_bind_int64"
-		var numberVal js.Value
-		if typedVal > maxSafeJSInt || typedVal < minSafeJSInt {
-			numberVal = bigInt.New(strconv.FormatInt(typedVal, 10))
-		} else {
-			numberVal = js.ValueOf(typedVal)
-		}
-		rc = s.d.CAPI.Call(funcName, s.cptr, index, numberVal)
+		enc.int64(index, typedVal)
 	case uint64:
-		funcName = "sqlite3_bind_int64"
-		var numberVal js.Value
-		if typedVal > maxSafeJSInt {
-			numberVal = bigInt.New(strconv.FormatUint(typedVal, 10))
+		// Values above MaxInt64 wrap around, matching what SQLite would store anyway.
+		enc.int64(index, int64(typedVal))
+	case time.Time:
+		enc.text(index, typedVal.UTC().Format(sqliteTimeFormat))
+	case *time.Time:
+		if typedVal == nil {
+			enc.null(index)
 		} else {
-			numberVal = js.ValueOf(typedVal)
+			enc.text(index, typedVal.UTC().Format(sqliteTimeFormat))
 		}
-		rc = s.d.CAPI.Call(funcName, s.cptr, index, numberVal)
+	case int:
+		enc.int64(index, int64(typedVal))
+	case int8:
+		enc.int64(index, int64(typedVal))
+	case int16:
+		enc.int64(index, int64(typedVal))
+	case int32:
+		enc.int64(index, int64(typedVal))
+	case uint:
+		enc.int64(index, int64(typedVal))
+	case uint8:
+		enc.int64(index, int64(typedVal))
+	case uint16:
+		enc.int64(index, int64(typedVal))
+	case uint32:
+		enc.int64(index, int64(typedVal))
 	default:
-		return fmt.Errorf("unsupported type %T", val)
-	}
-	if realRC := rc.Int(); realRC != 0 {
-		return s.d.MakeError(s.c, funcName, realRC)
+		return s.encodeReflected(index, reflect.ValueOf(val))
 	}
 	return nil
 }
 
-func (s *Stmt) BindValue(ctx context.Context, val driver.NamedValue) error {
-	index := val.Ordinal
-	if val.Name != "" {
-		index = s.d.CAPI.Call("sqlite3_bind_parameter_index", s.cptr, val.Name).Int()
-		if index == 0 {
-			return fmt.Errorf("no parameter named %q found", val.Name)
-		}
-	}
-
-	switch typedVal := val.Value.(type) {
-	case time.Time:
-		val.Value = typedVal.UTC().Format(sqliteTimeFormat)
-	case *time.Time:
-		val.Value = typedVal.UTC().Format(sqliteTimeFormat)
-	case int:
-		val.Value = int64(typedVal)
-	case int8:
-		val.Value = int64(typedVal)
-	case int16:
-		val.Value = int64(typedVal)
-	case int32:
-		val.Value = int64(typedVal)
-	case uint:
-		val.Value = int64(typedVal)
-	case uint8:
-		val.Value = int64(typedVal)
-	case uint16:
-		val.Value = int64(typedVal)
-	case uint32:
-		val.Value = int64(typedVal)
-	}
-
-	// Fast path for supported unwrapped types
-	switch val.Value.(type) {
-	case int64, uint64, float32, float64, bool, string, []byte:
-		return s.bindNonPointerValue(ctx, index, val.Value)
-	case nil:
-		return s.bindNil(ctx, index)
-	}
-
-	// Reflect path for wrapped types (pointers, custom type definitions of supported types)
-	reflectVal := reflect.ValueOf(val.Value)
+// encodeReflected handles pointers and named types of the supported kinds.
+func (s *Stmt) encodeReflected(index int, reflectVal reflect.Value) error {
+	enc := &s.c.params
 	for {
 		switch reflectVal.Kind() {
 		case reflect.Pointer:
 			if reflectVal.IsNil() {
-				return s.bindNil(ctx, index)
+				enc.null(index)
+				return nil
 			}
 			reflectVal = reflectVal.Elem()
 			continue
@@ -177,44 +128,48 @@ func (s *Stmt) BindValue(ctx context.Context, val driver.NamedValue) error {
 			if reflectVal.Elem().Kind() != reflect.Uint8 {
 				return fmt.Errorf("unsupported slice type %T", reflectVal.Interface())
 			}
-			var typedVal []byte = unsafe.Slice((*byte)(reflectVal.UnsafePointer()), reflectVal.Len())
-			return s.bindNonPointerValue(ctx, index, typedVal)
+			enc.blob(index, unsafe.Slice((*byte)(reflectVal.UnsafePointer()), reflectVal.Len()))
+			return nil
 		case reflect.String:
-			return s.bindNonPointerValue(ctx, index, reflectVal.String())
+			enc.text(index, reflectVal.String())
+			return nil
 		case reflect.Bool:
-			return s.bindNonPointerValue(ctx, index, reflectVal.Bool())
+			if reflectVal.Bool() {
+				enc.int64(index, 1)
+			} else {
+				enc.int64(index, 0)
+			}
+			return nil
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			return s.bindNonPointerValue(ctx, index, reflectVal.Int())
+			enc.int64(index, reflectVal.Int())
+			return nil
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			return s.bindNonPointerValue(ctx, index, reflectVal.Uint())
+			enc.int64(index, int64(reflectVal.Uint()))
+			return nil
 		case reflect.Float32, reflect.Float64:
-			return s.bindNonPointerValue(ctx, index, reflectVal.Float())
-		case reflect.Complex64, reflect.Complex128, reflect.Array, reflect.Chan,
-			reflect.Func, reflect.Interface, reflect.Map, reflect.Struct,
-			reflect.UnsafePointer, reflect.Uintptr, reflect.Invalid:
-			return fmt.Errorf("unsupported type %T", val.Value)
+			enc.float64(index, reflectVal.Float())
+			return nil
+		default:
+			return fmt.Errorf("unsupported type %T", reflectVal.Interface())
 		}
-		panic(fmt.Errorf("unreachable code reached with reflect kind %v", reflectVal.Kind()))
 	}
 }
 
-func (s *Stmt) bind(ctx context.Context, args []driver.NamedValue) error {
-	s.clearBindings(ctx)
+func (s *Stmt) encodeArgs(args []driver.NamedValue) error {
+	s.c.params.reset(len(args))
 	for _, arg := range args {
-		err := s.BindValue(ctx, arg)
-		if err != nil {
+		index := arg.Ordinal
+		if arg.Name != "" {
+			index = s.d.CAPI.Call("sqlite3_bind_parameter_index", s.cptr, arg.Name).Int()
+			if index == 0 {
+				return fmt.Errorf("no parameter named %q found", arg.Name)
+			}
+		}
+		if err := s.encodeValue(index, arg.Value); err != nil {
 			return fmt.Errorf("failed to bind %d: %w", arg.Ordinal, err)
 		}
 	}
 	return nil
-}
-
-func (s *Stmt) step(ctx context.Context) (bool, error) {
-	rc := s.d.CAPI.Call("sqlite3_step", s.cptr).Int()
-	if rc != SQLITE_OK && rc != SQLITE_ROW && rc != SQLITE_DONE {
-		return false, s.d.MakeError(s.c, "sqlite3_step", rc)
-	}
-	return rc == SQLITE_ROW, nil
 }
 
 func (s *Stmt) reset(_ context.Context) error {
@@ -225,47 +180,45 @@ func (s *Stmt) reset(_ context.Context) error {
 	return nil
 }
 
-func (s *Stmt) clearBindings(_ context.Context) {
-	s.d.CAPI.Call("sqlite3_clear_bindings", s.cptr)
-}
-
 func (s *Stmt) ExecContext(ctx context.Context, args []driver.NamedValue) (res driver.Result, retErr error) {
 	defer catchIntoError(&retErr)
-	err := s.bind(ctx, args)
+	err := s.encodeArgs(args)
 	if err != nil {
 		return nil, err
 	}
-	_, err = s.step(ctx)
+	dec, err := s.c.batchedQuery(s.cptr, false, false)
+	if err != nil {
+		return nil, err
+	}
+	changes, lastInsertRowID, err := dec.trailer()
 	if err != nil {
 		return nil, err
 	}
 	if err = s.reset(ctx); err != nil {
 		return nil, err
 	}
-	return &Result{
-		lastInsertID: s.c.rowsAffected(),
-		rowsAffected: s.c.lastInsertRowID(),
-	}, nil
+	return &Result{lastInsertID: lastInsertRowID, rowsAffected: changes}, nil
 }
 
-func (s *Stmt) columns(_ context.Context) ([]string, []string) {
-	count := s.d.CAPI.Call("sqlite3_column_count", s.cptr).Int()
-	columns := make([]string, count)
-	columnTypes := make([]string, count)
-	for i := range columns {
-		columns[i] = s.d.CAPI.Call("sqlite3_column_name", s.cptr, i).String()
-		columnTypes[i] = strings.ToLower(s.d.CAPI.Call("sqlite3_column_decltype", s.cptr, i).String())
-	}
-	return columns, columnTypes
-}
-
-func (s *Stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	err := s.bind(ctx, args)
+func (s *Stmt) QueryContext(ctx context.Context, args []driver.NamedValue) (rows driver.Rows, retErr error) {
+	defer catchIntoError(&retErr)
+	err := s.encodeArgs(args)
 	if err != nil {
 		return nil, err
 	}
-	cols, colTypes := s.columns(ctx)
-	return &Rows{ctx: ctx, Stmt: s, columns: cols, columnTypes: colTypes}, nil
+	dec, err := s.c.batchedQuery(s.cptr, !s.colsLoaded, true)
+	if err != nil {
+		return nil, err
+	}
+	if !s.colsLoaded {
+		s.cols = dec.columns
+		s.decls = make([]string, len(dec.decltypes))
+		for i, decl := range dec.decltypes {
+			s.decls[i] = strings.ToLower(decl)
+		}
+		s.colsLoaded = true
+	}
+	return &Rows{ctx: ctx, Stmt: s, dec: dec}, nil
 }
 
 func (s *Stmt) Exec(args []driver.Value) (driver.Result, error) {

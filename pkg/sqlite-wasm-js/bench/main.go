@@ -1,19 +1,17 @@
 //go:build js
 
-// Microbenchmark for pkg/sqlite-wasm-js: measures how much time the Go<->JS
-// bridge costs compared to SQLite itself, using a table shaped like gomuks'
-// `event` table (22 columns). Three variants:
+// Microbenchmark for pkg/sqlite-wasm-js, using a table shaped like gomuks'
+// `event` table (22 columns). Variants:
 //
-//	current  - the real driver via database/sql, one prepare per call (what hicli does today)
-//	reuse    - the real driver, but with a prepared statement reused for all rows
-//	batched  - prototype: whole parameter set / whole result set crosses the bridge as ONE byte buffer
+//	current                   - the driver via database/sql with the pre-EXCLUSIVE pragmas, one prepare per call
+//	reuse                     - same, but with a prepared statement reused for all rows
+//	current+exclusive+persist - the driver with its default pragmas (EXCLUSIVE locking, PERSIST journal)
 //
 // Results are posted to JS as a JSON object on globalThis.benchResult.
 package main
 
 import (
 	"database/sql"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -209,6 +207,17 @@ func benchDriver(mode string, n int, reuse bool, extraPragmas string) (result, e
 	rows.Close()
 	res["select_all_ms"] = ms(time.Since(start))
 	res["select_all_rows"] = len(out)
+	if len(out) != n {
+		return nil, fmt.Errorf("expected %d rows, got %d", n, len(out))
+	}
+	// Rows come back newest first; verify a few decode exactly as inserted.
+	for _, i := range []int{0, n / 2, n - 1} {
+		r := out[n-1-i]
+		if r.EventID != eventID(i) || r.Content != sampleContent || r.Decrypted == nil || *r.Decrypted != sampleDecrypted ||
+			r.StateKey != nil || r.Timestamp != int64(1700000000000+i*1000) || r.UnreadType != 0 || r.StickyDuration != nil {
+			return nil, fmt.Errorf("row %d decoded incorrectly: %+v", i, r)
+		}
+	}
 
 	// --- point lookups ---
 	start = time.Now()
@@ -242,172 +251,6 @@ func benchDriver(mode string, n int, reuse bool, extraPragmas string) (result, e
 	return res, nil
 }
 
-// ---------------------------------------------------------------------------
-// Variant 3: batched bridge prototype (JS side does bind/step/column work,
-// one byte buffer crosses per statement execution)
-//
-// Encoding (little endian), shared with bridge.js:
-//   param/column tag: 0=NULL 1=INT64(8 bytes) 2=FLOAT64(8 bytes) 3=TEXT(u32 len + bytes) 4=BLOB(u32 len + bytes)
-//   params buffer:  u8 count, then tagged values
-//   result buffer:  u32 column count, then rows: each row = tagged values, terminated by u32 0xFFFFFFFF
-// ---------------------------------------------------------------------------
-
-func packParams(buf []byte, args []any) []byte {
-	buf = append(buf[:0], byte(len(args)))
-	for _, a := range args {
-		switch v := a.(type) {
-		case nil:
-			buf = append(buf, 0)
-		case int64:
-			buf = append(buf, 1)
-			buf = binary.LittleEndian.AppendUint64(buf, uint64(v))
-		case float64:
-			buf = append(buf, 2)
-			buf = binary.LittleEndian.AppendUint64(buf, math.Float64bits(v))
-		case string:
-			buf = append(buf, 3)
-			buf = binary.LittleEndian.AppendUint32(buf, uint32(len(v)))
-			buf = append(buf, v...)
-		case []byte:
-			buf = append(buf, 4)
-			buf = binary.LittleEndian.AppendUint32(buf, uint32(len(v)))
-			buf = append(buf, v...)
-		default:
-			panic(fmt.Sprintf("unsupported %T", a))
-		}
-	}
-	return buf
-}
-
-type decoder struct {
-	b   []byte
-	off int
-}
-
-func (d *decoder) u32() uint32 { v := binary.LittleEndian.Uint32(d.b[d.off:]); d.off += 4; return v }
-func (d *decoder) i64() int64 {
-	v := binary.LittleEndian.Uint64(d.b[d.off:])
-	d.off += 8
-	return int64(v)
-}
-func (d *decoder) str() string {
-	n := int(d.u32())
-	s := string(d.b[d.off : d.off+n])
-	d.off += n
-	return s
-}
-func (d *decoder) tag() byte { t := d.b[d.off]; d.off++; return t }
-func (d *decoder) optStr() *string {
-	if d.tag() == 0 {
-		return nil
-	}
-	s := d.str()
-	return &s
-}
-func (d *decoder) optI64() *int64 {
-	if d.tag() == 0 {
-		return nil
-	}
-	v := d.i64()
-	return &v
-}
-func (d *decoder) reqStr() string { d.tag(); return d.str() }
-func (d *decoder) reqI64() int64  { d.tag(); return d.i64() }
-
-func decodeEventRow(d *decoder) *eventRow {
-	return &eventRow{
-		RowID: d.reqI64(), RoomID: d.reqStr(), EventID: d.reqStr(), Sender: d.reqStr(), Type: d.reqStr(),
-		StateKey: d.optStr(), Timestamp: d.reqI64(), Content: d.reqStr(), Decrypted: d.optStr(),
-		DecryptedType: d.optStr(), Unsigned: d.reqStr(), LocalContent: d.optStr(), TransactionID: d.optStr(),
-		RedactedBy: d.optStr(), RelatesTo: d.optStr(), RelationType: d.optStr(), MegolmSessionID: d.optStr(),
-		DecryptionError: d.optStr(), SendError: d.optStr(), Reactions: d.optStr(), LastEditRowID: d.optI64(),
-		UnreadType: d.reqI64(), StickyDuration: d.optI64(),
-	}
-}
-
-type batched struct {
-	meow     js.Value
-	db       js.Value
-	scratch  js.Value // reusable Uint8Array for params
-	scratchN int
-}
-
-func (b *batched) params(args []any) js.Value {
-	packed := packParams(nil, args)
-	if len(packed) > b.scratchN {
-		b.scratchN = len(packed) * 2
-		b.scratch = js.Global().Get("Uint8Array").New(b.scratchN)
-	}
-	js.CopyBytesToJS(b.scratch, packed)
-	return b.scratch.Call("subarray", 0, len(packed))
-}
-
-// query runs a statement and returns the decoded result buffer.
-func (b *batched) query(stmt js.Value, args []any) *decoder {
-	out := b.meow.Call("batchedQuery", stmt, b.params(args))
-	buf := make([]byte, out.Length())
-	js.CopyBytesToGo(buf, out)
-	return &decoder{b: buf}
-}
-
-func benchBatched(mode string, n int, extraPragmas string) (result, error) {
-	res := result{}
-	sqlite3 := js.Global().Get("sqlite3")
-	b := &batched{meow: sqlite3.Get("meow")}
-	b.db = b.meow.Call("openDB", fmt.Sprintf("/bench-batched-%s-%d.db", mode, len(extraPragmas)), mode, extraPragmas)
-	defer b.meow.Call("closeDB", b.db)
-	res["db_info"] = js.Global().Get("lastDBInfo").String()
-	b.meow.Call("exec", b.db, "DROP TABLE IF EXISTS event")
-	b.meow.Call("exec", b.db, createTable)
-
-	start := time.Now()
-	b.meow.Call("exec", b.db, "BEGIN IMMEDIATE")
-	ins := b.meow.Call("prepare", b.db, insertQuery).Get("ptr")
-	for i := 0; i < n; i++ {
-		d := b.query(ins, insertArgs(i))
-		if d.u32() != 1 {
-			return nil, fmt.Errorf("insert %d: bad column count", i)
-		}
-		_ = d.reqI64()
-	}
-	b.meow.Call("finalize", ins)
-	b.meow.Call("exec", b.db, "COMMIT")
-	res["insert_ms"] = ms(time.Since(start))
-
-	start = time.Now()
-	sel := b.meow.Call("prepare", b.db, selectQuery).Get("ptr")
-	d := b.query(sel, []any{roomID, int64(n)})
-	b.meow.Call("finalize", sel)
-	if d.u32() != 23 {
-		return nil, fmt.Errorf("select: bad column count")
-	}
-	var out []*eventRow
-	for d.off < len(d.b) {
-		if binary.LittleEndian.Uint32(d.b[d.off:]) == 0xFFFFFFFF {
-			d.off += 4
-			continue
-		}
-		out = append(out, decodeEventRow(d))
-	}
-	res["select_all_ms"] = ms(time.Since(start))
-	res["select_all_rows"] = len(out)
-
-	start = time.Now()
-	lookups := min(n, 500)
-	one := b.meow.Call("prepare", b.db, selectOneQuery).Get("ptr")
-	for i := 0; i < lookups; i++ {
-		d := b.query(one, []any{eventID(i)})
-		if d.u32() != 23 {
-			return nil, fmt.Errorf("lookup %d: bad column count", i)
-		}
-		_ = decodeEventRow(d)
-	}
-	b.meow.Call("finalize", one)
-	res["point_lookup_ms"] = ms(time.Since(start))
-	res["point_lookups"] = lookups
-	return res, nil
-}
-
 // raw bridge cost: how long does one trivial syscall/js call take?
 func benchCrossing() result {
 	capi := js.Global().Get("sqlite3").Get("capi")
@@ -434,7 +277,7 @@ func main() {
 	all := result{"n": n, "reps": reps, "crossing": benchCrossing()}
 	for rep := 0; rep < reps; rep++ {
 		for _, mode := range []string{"memory", "opfs-sahpool"} {
-			variants := []string{"current", "reuse", "batched", "batched+exclusive+wal", "batched+exclusive+memjournal", "batched+exclusive+persist", "batched+exclusive+truncate", "batched+memjournal", "batched+exclusive+wal+syncoff"}
+			variants := []string{"current", "reuse", "current+exclusive+persist"}
 			if v := js.Global().Get("benchVariants"); v.Type() == js.TypeString && v.String() != "" {
 				variants = strings.Split(v.String(), ",")
 			}
@@ -452,21 +295,6 @@ func main() {
 					}
 					// Driver defaults (EXCLUSIVE locking, PERSIST journal).
 					r, err = benchDriver(mode, n, false, "PRAGMA foreign_keys = ON")
-				case "batched":
-					r, err = benchBatched(mode, n, "")
-				default:
-					if mode == "memory" {
-						continue
-					}
-					pragmas := map[string]string{
-						"batched+exclusive+wal":         "PRAGMA locking_mode = EXCLUSIVE;PRAGMA journal_mode = WAL",
-						"batched+exclusive+memjournal":  "PRAGMA locking_mode = EXCLUSIVE;PRAGMA journal_mode = MEMORY",
-						"batched+memjournal":            "PRAGMA journal_mode = MEMORY",
-						"batched+exclusive+persist":     "PRAGMA locking_mode = EXCLUSIVE;PRAGMA journal_mode = PERSIST",
-						"batched+exclusive+truncate":    "PRAGMA locking_mode = EXCLUSIVE;PRAGMA journal_mode = TRUNCATE",
-						"batched+exclusive+wal+syncoff": "PRAGMA locking_mode = EXCLUSIVE;PRAGMA journal_mode = WAL;PRAGMA synchronous = OFF",
-					}[variant]
-					r, err = benchBatched(mode, n, pragmas)
 				}
 				key := mode + "/" + variant
 				if err != nil {

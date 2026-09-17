@@ -12,6 +12,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall/js"
@@ -32,7 +33,19 @@ type Conn struct {
 	sahpool     bool
 	lockingMode string
 	journalMode string
+
+	// Buffers for the batched bridge. A driver.Conn is only used by one
+	// goroutine at a time and syscall/js calls are synchronous, so the
+	// parameter buffers can be reused; result buffers are per call because
+	// a Rows may still be reading one when the next statement runs.
+	params     paramEncoder
+	scratchJS  js.Value
+	scratchLen int
 }
+
+// chunkLimitBytes is the approximate size at which the JS side stops
+// stepping and returns a partial result; Rows.Next fetches the next chunk.
+const chunkLimitBytes = 1 << 20
 
 // Defaults for the OPFS SAHPool VFS. The pool has no shared memory, so
 // journal_mode=WAL silently falls back to a rollback journal. In rollback
@@ -123,6 +136,44 @@ func (c *Conn) connectHook(ctx context.Context) (dc driver.Conn, err error) {
 		return
 	}
 	return c, nil
+}
+
+// batchedQuery binds the parameters currently in c.params to stmt, steps it
+// (up to the chunk limit when keepRows is set, otherwise to completion) and
+// returns the decoded result.
+func (c *Conn) batchedQuery(stmt js.Value, wantColumns, keepRows bool) (*resultDecoder, error) {
+	n := len(c.params.buf)
+	if n > c.scratchLen {
+		c.scratchLen = max(n*2, 4096)
+		c.scratchJS = js.Global().Get("Uint8Array").New(c.scratchLen)
+	}
+	js.CopyBytesToJS(c.scratchJS, c.params.buf)
+	out := c.d.Meow.Call("batchedQuery", stmt, c.scratchJS, n, wantColumns, keepRows, chunkLimitBytes)
+	return c.decodeResult(out)
+}
+
+// batchedStep continues stepping a statement whose previous chunk was exhausted.
+func (c *Conn) batchedStep(stmt js.Value) (*resultDecoder, error) {
+	return c.decodeResult(c.d.Meow.Call("batchedStep", stmt, true, chunkLimitBytes))
+}
+
+func (c *Conn) decodeResult(out js.Value) (*resultDecoder, error) {
+	buf := make([]byte, out.Length())
+	if n := js.CopyBytesToGo(buf, out); n != len(buf) {
+		return nil, fmt.Errorf("copied %d of %d result bytes", n, len(buf))
+	}
+	dec, err := newResultDecoder(buf)
+	if err != nil {
+		return nil, err
+	}
+	if dec.rc != SQLITE_OK {
+		funcName := "sqlite3_step"
+		if dec.phase == phaseBind {
+			funcName = "sqlite3_bind"
+		}
+		return nil, c.d.MakeError(c, funcName, dec.rc)
+	}
+	return dec, nil
 }
 
 // queryString runs a query and returns the first column of the first row as a string.
@@ -217,6 +268,17 @@ func valuesToNamedValues(args []driver.Value) []driver.NamedValue {
 		}
 	}
 	return values
+}
+
+func parseStrOrNumber(val js.Value) (int64, error) {
+	switch val.Type() {
+	case js.TypeNumber:
+		return int64(val.Int()), nil
+	case js.TypeString:
+		return strconv.ParseInt(val.String(), 10, 64)
+	default:
+		return 0, fmt.Errorf("unexpected JS type %s for integer", val.Type().String())
+	}
 }
 
 func (c *Conn) lastInsertRowID() int64 {

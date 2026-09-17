@@ -1,4 +1,6 @@
 node_modules/
 bench.wasm
 wasm_exec.js
+sqlite_bridge.js
+sqlite3.wasm
 package-lock.json

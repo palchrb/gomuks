@@ -1,5 +1,5 @@
 import "./wasm_exec.js"
-import initSqlite from "./bridge.js"
+import initSqlite from "./sqlite_bridge.js"
 
 ;(async () => {
 	const params = new URL(self.location.href).searchParams
