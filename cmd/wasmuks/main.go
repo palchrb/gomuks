@@ -170,7 +170,7 @@ type wasmuksInit struct {
 const (
 	defaultMemoryLimitMB        = 512
 	defaultGCBallastMB          = 64
-	defaultInitialTimelineLimit = 20
+	defaultInitialTimelineLimit = 100
 )
 
 // gcBallast keeps the GC's heap target up. The live heap in wasm is tiny
