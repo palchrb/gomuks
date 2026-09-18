@@ -48,7 +48,7 @@ Measured on a Raspberry Pi, median of ten runs, 2000 rows, milliseconds:
 | upstream wasmuks | 1496 | 802 | 1234 |
 | this build | 545 | 89 | 70 |
 | floor: no storage, database in memory | 298 | 88 | 69 |
-| improvement | 2.7x | 9.0x | 17.6x |
+| improvement vs upstream wasmuks | 2.7x | 9.0x | 17.6x |
 
 Reads and lookups have reached the floor, so nothing is left to win there.
 Only inserts still pay for the disk, and that difference is the file writes.

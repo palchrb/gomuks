@@ -105,6 +105,7 @@ for (const key of keys) {
 // without a file, so the floor uses the same driver in memory.
 const headline = [
 	["upstream wasmuks", "opfs-sahpool/upstream"],
+	// The label column is sized from these names, so keep the longest one here.
 	["this build", "opfs-sahpool/current+exclusive+persist"],
 	["floor: no storage, in memory", "memory/current"],
 ]
@@ -112,7 +113,7 @@ if (headline.every(([, key]) => keys.includes(key))) {
 	const value = (key, metric) => median(results
 		.map(r => r[key]?.[metric])
 		.filter(v => typeof v === "number"))
-	const label = Math.max(...headline.map(([name]) => name.length))
+	const label = Math.max("improvement vs upstream".length, ...headline.map(([name]) => name.length))
 	console.log("\nSummary, median of the runs, milliseconds\n")
 	console.log(
 		"".padEnd(label),
@@ -125,7 +126,7 @@ if (headline.every(([, key]) => keys.includes(key))) {
 		)
 	}
 	console.log(
-		"improvement".padEnd(label),
+		"improvement vs upstream".padEnd(label),
 		...metrics.map(m => {
 			const factor = value(headline[0][1], m) / value(headline[1][1], m)
 			return `${factor.toFixed(1)}x`.padStart(16)
