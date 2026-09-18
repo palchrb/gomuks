@@ -5,6 +5,8 @@
 //
 //	upstream                   - the driver as it stood in gomuks v26.09 (see upstream/):
 //	                             one crossing into JS per value, no statement cache
+//	upstream+reuse             - the same, with one prepared statement reused for every
+//	                             row, which is the closest thing to giving it a cache
 //	upstream+exclusive+persist - the same driver with EXCLUSIVE locking and a PERSIST journal
 //	current                    - this driver (batched bridge, statement cache) with the old pragmas
 //	reuse                      - same, but with a prepared statement reused for all rows
@@ -294,6 +296,11 @@ func runVariant(variant, mode string, n int) (result, error) {
 	switch variant {
 	case "upstream":
 		return benchDriver(upstreamDriver, "up", mode, n, false, "")
+	case "upstream+reuse":
+		// The upstream driver has no statement cache, so reusing one prepared
+		// statement in the caller is the closest thing to giving it one. It
+		// separates the cache's share of upstream -> current from the bridge's.
+		return benchDriver(upstreamDriver, "upr", mode, n, true, "")
 	case "upstream+exclusive+persist":
 		if mode == "memory" {
 			return nil, nil
@@ -331,7 +338,7 @@ func main() {
 	reps := 3
 	all := result{"n": n, "reps": reps}
 	variants := []string{
-		"upstream", "upstream+exclusive+persist",
+		"upstream", "upstream+reuse", "upstream+exclusive+persist",
 		"current", "reuse", "current+exclusive+persist",
 	}
 	if v := js.Global().Get("benchVariants"); v.Type() == js.TypeString && v.String() != "" {

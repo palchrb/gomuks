@@ -11,6 +11,10 @@ Variants, in the order they build on each other:
 * `upstream` – the driver as it stood in gomuks v26.09, copied verbatim into
   `upstream/`: one crossing into JavaScript per value, no statement cache,
   normal locking and a rollback journal.
+* `upstream+reuse` – the same driver with one prepared statement reused for
+  every row. It has no statement cache, so this is the closest thing to giving
+  it one, and it separates the cache's share of the improvement from the
+  bridge's.
 * `upstream+exclusive+persist` – the same driver with `PRAGMA
   locking_mode=EXCLUSIVE` and `journal_mode=PERSIST`.
 * `current` – this driver (batched bridge, statement cache) with the old
@@ -50,9 +54,11 @@ holds across the machines it has been run on:
   and cannot trust its cached pages between statements, and on the SAH pool
   each of those is a synchronous file operation. Holding the lock for the
   session brings point lookups down to in-memory speed.
-* The **statement cache** barely shows up: `reuse`, which reuses one prepared
-  statement for every row, is within noise of `current`. It stays because it
-  removes a crossing per query, not because the benchmark rewards it.
+* The **statement cache** is worth checking on the machine you care about.
+  `reuse` against `current` shows what the caller would gain by holding
+  prepared statements itself once the driver already caches them, which is
+  nothing; `upstream+reuse` against `upstream` shows what the cache is worth
+  to a driver that has none.
 
 The remaining insert cost on storage is the actual file writes, around
 60 MB/s in this environment.
