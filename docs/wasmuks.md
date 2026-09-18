@@ -244,8 +244,11 @@ does, including the blurhash on the thumbnail. If the browser cannot decode a
 file, it is uploaded without the extra detail rather than failing.
 
 What still cannot work is re-encoding to a video or audio format, which needs
-a codec. That is now refused with an explanation instead of silently
-uploading the original. A WebAssembly build of ffmpeg would cover it, but it
+a codec. The upload dialog no longer offers those targets in this build, and
+a voice recording is sent in whatever format the browser recorded it in
+rather than converted to ogg/opus, which is what the server build does with
+ffmpeg. Every browser records something other clients can play, so the only
+loss is uniformity. A WebAssembly build of ffmpeg would cover it, but it
 is around 30 MB on its own, which is the same size as the whole client, so it
 would only be worth loading at the moment someone asks for a conversion.
 Uploads are also held in memory rather than streamed, so a very large file can

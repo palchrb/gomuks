@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import React, { JSX, use, useEffect, useRef, useState } from "react"
 import type { MediaEncodingOptions } from "@/api/types"
+import ClientContext from "@/ui/ClientContext.ts"
 import { ModalCloseContext } from "@/ui/modal"
 import { isMobileDevice } from "@/util/ismobile.ts"
 import "./MediaUploadDialog.css"
@@ -56,7 +57,10 @@ interface dimensions {
 const MediaUploadDialog = ({ file, blobURL, doUploadFile, isEncrypted, isVoice }: MediaUploadDialogProps) => {
 	const videoRef = useRef<HTMLVideoElement>(null)
 	const [name, setName] = useState(file.name)
-	const needsVoiceReenc = isVoice && file.type !== voiceMimeType
+	// Re-encoding video and audio needs ffmpeg, which only the server build
+	// has. Images are pure Go and work in both.
+	const ffmpegAvailable = !use(ClientContext)!.rpc.rpcMediaUpload
+	const needsVoiceReenc = isVoice && ffmpegAvailable && file.type !== voiceMimeType
 	const initialReencTarget = nonEncodableSources.includes(file.type)
 		? "image/jpeg"
 		: needsVoiceReenc
@@ -100,9 +104,15 @@ const MediaUploadDialog = ({ file, blobURL, doUploadFile, isEncrypted, isVoice }
 		previewContent = <video controls onLoadedMetadata={videoMetaLoaded} ref={videoRef}>
 			<source src={blobURL} type={file.type} />
 		</video>
-		reencTargets = videoReencTargets
+		if (!ffmpegAvailable) {
+			// Re-encoding video or audio needs ffmpeg, which the browser build
+			// doesn't have, so don't offer targets that would be ignored.
+			reencTargets = null
+		} else {
+			reencTargets = videoReencTargets
+		}
 	} else if (file.type.startsWith("audio/")) {
-		reencTargets = isVoice ? voiceReencTargets : audioReencTargets
+		reencTargets = ffmpegAvailable ? (isVoice ? voiceReencTargets : audioReencTargets) : null
 		previewContent = <audio controls>
 			<source src={blobURL} type={file.type} />
 		</audio>

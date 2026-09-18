@@ -649,7 +649,11 @@ const MessageComposer = () => {
 			openModal(modals.mediaUpload(file, doUploadFile, isEncrypted, isVoice))
 		} else {
 			window.closeModal()
-			const encTo = isVoice && file.type !== "audio/ogg; codecs=opus" ? "audio/ogg; codecs=opus" : undefined
+			// The wasm build has no ffmpeg, so asking for ogg would be ignored.
+			// The recording is already playable as it is.
+			const encTo = isVoice && !client.rpc.rpcMediaUpload && file.type !== "audio/ogg; codecs=opus"
+				? "audio/ogg; codecs=opus"
+				: undefined
 			doUploadFile(file, file.name, { voice_message: isVoice, encode_to: encTo })
 		}
 	}
