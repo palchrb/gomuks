@@ -89,6 +89,18 @@ const (
 		          > COALESCE((SELECT rowid FROM timeline WHERE event_rowid = preview_event_rowid), 0)
 		RETURNING preview_event_rowid, sorting_timestamp
 	`
+	// Used when a room has no preview event at all: its sorting timestamp is
+	// then a placeholder taken from whatever event happened to be last in the
+	// initial sync (see the fallback in hicli/sync.go), which for a busy room
+	// with no recent messages can be a join or a leave. Once a real message
+	// turns up, the placeholder is replaced even if that moves the room down.
+	setRoomPreviewIfUnsetQuery = `
+		UPDATE room
+		SET preview_event_rowid = $2,
+		    sorting_timestamp = $3,
+		    mod_timestamp = unixepoch('subsec')*1000
+		WHERE room_id = $1 AND preview_event_rowid IS NULL
+	`
 	recalculateRoomPreviewEventQuery = `
 		SELECT rowid
 		FROM event
@@ -170,6 +182,19 @@ func (rq *RoomQuery) UpdatePreviewIfLaterOnTimeline(
 		err = nil
 	}
 	return
+}
+
+// SetPreviewIfUnset sets the preview event and sorting timestamp of a room
+// that has no preview event yet, and reports whether it changed anything.
+func (rq *RoomQuery) SetPreviewIfUnset(
+	ctx context.Context, roomID id.RoomID, rowID EventRowID, sortingTimestamp jsontime.UnixMilli,
+) (bool, error) {
+	res, err := rq.GetDB().Exec(ctx, setRoomPreviewIfUnsetQuery, roomID, rowID, sortingTimestamp.UnixMilli())
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	return affected > 0, err
 }
 
 func (rq *RoomQuery) RecalculatePreview(ctx context.Context, roomID id.RoomID) (rowID EventRowID, err error) {
