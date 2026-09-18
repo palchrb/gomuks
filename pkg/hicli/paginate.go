@@ -429,7 +429,6 @@ func (h *HiClient) PaginateServer(ctx context.Context, roomID id.RoomID, limit i
 		Str("end", resp.End).
 		Msg("Got pagination response from server")
 	events := make([]*database.Event, len(resp.Chunk))
-	var newPreview *database.Event
 	if resp.End == "" {
 		resp.End = database.PrevBatchPaginationComplete
 	}
@@ -506,30 +505,6 @@ func (h *HiClient) PaginateServer(ctx context.Context, roomID id.RoomID, limit i
 		for i, evt := range events {
 			evt.TimelineRowID = tuples[i].Timeline
 		}
-		// A room with no preview event has a placeholder sorting timestamp (the
-		// last event of any type at the time of the initial sync, which in a
-		// busy room can be a membership change). Backfill is the first chance
-		// to replace it with the newest real message.
-		if room.PreviewEventRowID == 0 {
-			previewRowID, err := h.DB.Room.RecalculatePreview(ctx, room.ID)
-			if err != nil {
-				return fmt.Errorf("failed to recalculate preview event: %w", err)
-			} else if previewRowID != 0 {
-				previewEvt, err := h.DB.Event.GetByRowID(ctx, previewRowID)
-				if err != nil {
-					return fmt.Errorf("failed to get recalculated preview event: %w", err)
-				} else if previewEvt != nil {
-					changed, err := h.DB.Room.SetPreviewIfUnset(ctx, room.ID, previewRowID, previewEvt.Timestamp)
-					if err != nil {
-						return fmt.Errorf("failed to set preview event: %w", err)
-					} else if changed {
-						room.PreviewEventRowID = previewRowID
-						room.SortingTimestamp = previewEvt.Timestamp
-						newPreview = previewEvt
-					}
-				}
-			}
-		}
 		return nil
 	}
 	lockStart := time.Now()
@@ -555,18 +530,6 @@ func (h *HiClient) PaginateServer(ctx context.Context, roomID id.RoomID, limit i
 	}
 	if err == nil && wakeupSessionRequests {
 		h.WakeupRequestQueue()
-	}
-	if err == nil && newPreview != nil {
-		// Deliberately not dispatched to clients: the corrected timestamp is
-		// older than the placeholder, so announcing it now would move the room
-		// down the list while the user is reading it. The database is correct
-		// and the mod timestamp is bumped, so the next connection (or catchup
-		// sync) picks it up and the list is simply right from then on.
-		// Info rather than debug: it corrects a visibly wrong room list entry.
-		zerolog.Ctx(ctx).Info().
-			Int64("preview_event_rowid", int64(newPreview.RowID)).
-			Time("sorting_timestamp", newPreview.Timestamp.Time).
-			Msg("Set room preview and sorting timestamp from backfill")
 	}
 	return &jsoncmd.PaginationResponse{
 		Events:     events,

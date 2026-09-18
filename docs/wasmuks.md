@@ -181,15 +181,6 @@ busy rooms with no message to sort or preview by, and any limited sync (which
 happens whenever a suspended tab resumes) trimmed the stored timeline down to
 it. The window is the same as the native build's.
 
-**A room sits high in the room list with no preview text.** Its last
-messages are further back than the initial sync window, so the backend had no
-message to sort it by and fell back to the timestamp of the last event of any
-kind, typically someone joining or leaving. Open the room: the backfill that
-follows finds the newest real message, stores it as the preview and the
-sorting timestamp, and the room list is right from the next load onwards (the
-move is deliberately not applied while the room is open). Look for
-`Set room preview and sorting timestamp from backfill` in the console.
-
 **A room sits in the wrong place in the room list on one device only.** The
 room list is restored from an IndexedDB cache on every load, and the backend
 then sends only rooms changed since the cached timestamp. An older build
