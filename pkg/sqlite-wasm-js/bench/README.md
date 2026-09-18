@@ -68,6 +68,11 @@ node runs.js 10                                       # 10 runs, 2000 rows, all 
 node runs.js 20 2000 "upstream,current+exclusive+persist"   # a subset
 ```
 
+Each run warms up every variant on a small table first and throws those
+numbers away. Without that the variant that happens to run first carries the
+warm-up cost in every repetition, so taking the minimum does not remove it,
+and it looked like a real difference of about a third on the read.
+
 It prints min, median, mean, max and max/min per variant and operation, and
 writes every raw result to `results-<timestamp>.json`. Read the spread before
 believing a difference: anything inside it is noise. Ten runs is usually

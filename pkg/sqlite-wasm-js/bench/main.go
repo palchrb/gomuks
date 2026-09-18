@@ -287,52 +287,74 @@ func benchCrossing() result {
 	}
 }
 
+// runVariant runs one variant once. It returns nil, nil for combinations that
+// don't apply: locking mode is meaningless without a file, so the exclusive
+// variants only run against storage.
+func runVariant(variant, mode string, n int) (result, error) {
+	switch variant {
+	case "upstream":
+		return benchDriver(upstreamDriver, "up", mode, n, false, "")
+	case "upstream+exclusive+persist":
+		if mode == "memory" {
+			return nil, nil
+		}
+		// The upstream driver ignores the URI parameters for these, so set
+		// them the only way it understands.
+		return benchDriver(upstreamDriver, "upx", mode, n, false,
+			"PRAGMA locking_mode = EXCLUSIVE;PRAGMA journal_mode = PERSIST")
+	case "current":
+		return benchDriver(currentDriver, "cur", mode, n, false, "")
+	case "reuse":
+		return benchDriver(currentDriver, "reuse", mode, n, true, "")
+	case "current+exclusive+persist":
+		if mode == "memory" {
+			return nil, nil
+		}
+		// Driver defaults (EXCLUSIVE locking, PERSIST journal).
+		return benchDriver(currentDriver, "curx", mode, n, false, "PRAGMA foreign_keys = ON")
+	default:
+		return nil, fmt.Errorf("unknown variant %q", variant)
+	}
+}
+
+// warmupRows is small enough to be quick and large enough to get the bridge
+// and the row decoding through V8's optimiser. Without it the variant that
+// happens to run first carries the whole warm-up cost, in every repetition,
+// so taking the minimum doesn't remove it: it looked like a real difference
+// of about a third on the read.
+const warmupRows = 200
+
+var modes = []string{"memory", "opfs-sahpool"}
+
 func main() {
 	n := js.Global().Get("benchN").Int()
 	reps := 3
-	all := result{"n": n, "reps": reps, "crossing": benchCrossing()}
+	all := result{"n": n, "reps": reps}
+	variants := []string{
+		"upstream", "upstream+exclusive+persist",
+		"current", "reuse", "current+exclusive+persist",
+	}
+	if v := js.Global().Get("benchVariants"); v.Type() == js.TypeString && v.String() != "" {
+		variants = strings.Split(v.String(), ",")
+	}
+	for _, mode := range modes {
+		for _, variant := range variants {
+			if _, err := runVariant(variant, mode, min(n, warmupRows)); err != nil {
+				clog("warmup error", mode+"/"+variant, err.Error())
+			}
+		}
+	}
+	all["crossing"] = benchCrossing()
 	for rep := 0; rep < reps; rep++ {
-		for _, mode := range []string{"memory", "opfs-sahpool"} {
-			variants := []string{
-				"upstream", "upstream+exclusive+persist",
-				"current", "reuse", "current+exclusive+persist",
-			}
-			if v := js.Global().Get("benchVariants"); v.Type() == js.TypeString && v.String() != "" {
-				variants = strings.Split(v.String(), ",")
-			}
+		for _, mode := range modes {
 			for _, variant := range variants {
-				var r result
-				var err error
-				// Locking mode is meaningless without a file, so the
-				// exclusive variants only run against storage.
-				switch variant {
-				case "upstream":
-					r, err = benchDriver(upstreamDriver, "up", mode, n, false, "")
-				case "upstream+exclusive+persist":
-					if mode == "memory" {
-						continue
-					}
-					// The upstream driver ignores the URI parameters for these,
-					// so set them the only way it understands.
-					r, err = benchDriver(upstreamDriver, "upx", mode, n, false,
-						"PRAGMA locking_mode = EXCLUSIVE;PRAGMA journal_mode = PERSIST")
-				case "current":
-					r, err = benchDriver(currentDriver, "cur", mode, n, false, "")
-				case "reuse":
-					r, err = benchDriver(currentDriver, "reuse", mode, n, true, "")
-				case "current+exclusive+persist":
-					if mode == "memory" {
-						continue
-					}
-					// Driver defaults (EXCLUSIVE locking, PERSIST journal).
-					r, err = benchDriver(currentDriver, "curx", mode, n, false, "PRAGMA foreign_keys = ON")
-				default:
-					err = fmt.Errorf("unknown variant %q", variant)
-				}
+				r, err := runVariant(variant, mode, n)
 				key := mode + "/" + variant
 				if err != nil {
 					all[key] = result{"error": err.Error()}
 					clog("bench error", key, err.Error())
+					continue
+				} else if r == nil {
 					continue
 				}
 				if prev, ok := all[key].(result); ok {
