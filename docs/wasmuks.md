@@ -218,6 +218,10 @@ Not done, kept as options:
   also shrinks V8's compiled code proportionally).
 * **Native gomuks per user** as a compose file, for people who use the
   server machine itself as a client.
+* **Upstream**: `pkg/sqlite-wasm-js/stmt.go` at the version this fork started
+  from returns `LastInsertId` and `RowsAffected` the wrong way round for
+  prepared statements, so an UPDATE reports the last inserted rowid as its
+  affected row count. Fixed here already, worth reporting.
 * **Upstream**: the websocket path has the same initial-sync/live-event
   ordering race that wasmuks now guards against (`sendInitialData` runs
   alongside the event writer); and a failed IndexedDB cache flush leaves

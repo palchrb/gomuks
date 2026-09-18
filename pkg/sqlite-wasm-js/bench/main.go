@@ -285,16 +285,27 @@ func benchDriver(driverName, tag, mode string, n int, reuse bool, extraPragmas s
 	start = time.Now()
 	updates := min(n, 500)
 	for i := 0; i < updates; i++ {
-		updateRes, updateErr := db.Exec(updateQuery, i%4, eventID(i))
-		if updateErr != nil {
-			return nil, fmt.Errorf("update %d: %w", i, updateErr)
-		}
-		if affected, _ := updateRes.RowsAffected(); affected != 1 {
-			return nil, fmt.Errorf("update %d changed %d rows", i, affected)
+		// The affected row count is not checked here: the vendored upstream
+		// driver returns the last insert rowid for it (its stmt.go has the two
+		// swapped), and it is a reference copy, not something to fix. The rows
+		// are verified below instead.
+		if _, err = db.Exec(updateQuery, i%4, eventID(i)); err != nil {
+			return nil, fmt.Errorf("update %d: %w", i, err)
 		}
 	}
 	res["update_ms"] = ms(time.Since(start))
 	res["updates"] = updates
+	for _, i := range []int{0, updates / 2, updates - 1} {
+		var unreadType int
+		if err = db.QueryRow(
+			"SELECT unread_type FROM event WHERE event_id = $1", eventID(i),
+		).Scan(&unreadType); err != nil {
+			return nil, fmt.Errorf("verify update %d: %w", i, err)
+		}
+		if unreadType != i%4 {
+			return nil, fmt.Errorf("update %d did not apply: unread_type is %d", i, unreadType)
+		}
+	}
 	return res, nil
 }
 
