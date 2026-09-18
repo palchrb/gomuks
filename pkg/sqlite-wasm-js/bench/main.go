@@ -11,6 +11,8 @@
 //	current                    - this driver (batched bridge, statement cache) with the old pragmas
 //	reuse                      - same, but with a prepared statement reused for all rows
 //	current+exclusive+persist  - this driver with its defaults: what gomuks ships
+//	page4k .. page64k          - the shipping configuration with a different SQLite
+//	                             page size; the sqlite-wasm build defaults to 8 KiB
 //
 // upstream vs current isolates the bridge; the two +exclusive+persist variants
 // isolate the locking mode. Every variant also runs against an in-memory
@@ -24,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"syscall/js"
 	"time"
@@ -170,9 +173,14 @@ func benchDriver(driverName, tag, mode string, n int, reuse bool, extraPragmas s
 		}
 	}
 	var jm, lm string
+	var pageSize, cacheSize int
 	_ = db.QueryRow("PRAGMA journal_mode").Scan(&jm)
 	_ = db.QueryRow("PRAGMA locking_mode").Scan(&lm)
-	res["db_info"] = fmt.Sprintf(`{"journal_mode":%q,"locking_mode":%q}`, jm, lm)
+	_ = db.QueryRow("PRAGMA page_size").Scan(&pageSize)
+	_ = db.QueryRow("PRAGMA cache_size").Scan(&cacheSize)
+	res["db_info"] = fmt.Sprintf(
+		`{"journal_mode":%q,"locking_mode":%q,"page_size":%d,"cache_size":%d}`,
+		jm, lm, pageSize, cacheSize)
 	if _, err = db.Exec("DROP TABLE IF EXISTS event"); err != nil {
 		return nil, err
 	}
@@ -319,6 +327,21 @@ func runVariant(variant, mode string, n int) (result, error) {
 		}
 		// Driver defaults (EXCLUSIVE locking, PERSIST journal).
 		return benchDriver(currentDriver, "curx", mode, n, false, "PRAGMA foreign_keys = ON")
+	case "page4k", "page16k", "page32k", "page64k":
+		if mode == "memory" {
+			return nil, nil
+		}
+		// The sqlite-wasm build already defaults to 8 KiB pages, so these are
+		// the shipping configuration with a different page size. The size is
+		// fixed when the file is created, hence the VACUUM; on a fresh file it
+		// costs nothing.
+		size := strings.TrimSuffix(strings.TrimPrefix(variant, "page"), "k")
+		kib, err := strconv.Atoi(size)
+		if err != nil {
+			return nil, fmt.Errorf("bad page size in variant %q", variant)
+		}
+		return benchDriver(currentDriver, variant, mode, n, false,
+			fmt.Sprintf("PRAGMA page_size = %d;VACUUM;PRAGMA foreign_keys = ON", kib*1024))
 	default:
 		return nil, fmt.Errorf("unknown variant %q", variant)
 	}
@@ -337,10 +360,11 @@ func main() {
 	n := js.Global().Get("benchN").Int()
 	reps := 3
 	all := result{"n": n, "reps": reps}
-	variants := []string{
-		"upstream", "upstream+reuse", "upstream+exclusive+persist",
-		"current", "reuse", "current+exclusive+persist",
-	}
+	// The default is the three rows of the summary: where this started, where
+	// it is now, and the floor. "current" also supplies the in-memory floor,
+	// since locking mode means nothing without a file. The rest exist for
+	// attributing the improvement and are asked for by name.
+	variants := []string{"upstream", "current", "current+exclusive+persist"}
 	if v := js.Global().Get("benchVariants"); v.Type() == js.TypeString && v.String() != "" {
 		variants = strings.Split(v.String(), ",")
 	}

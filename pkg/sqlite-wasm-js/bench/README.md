@@ -11,6 +11,10 @@ Variants, in the order they build on each other:
 * `upstream` – the driver as it stood in gomuks v26.09, copied verbatim into
   `upstream/`: one crossing into JavaScript per value, no statement cache,
   normal locking and a rollback journal.
+* `page4k` … `page64k` – the shipping configuration with a different SQLite
+  page size. The sqlite-wasm build already defaults to 8 KiB rather than
+  SQLite's usual 4 KiB, and the `page4k` variant shows why. Not part of the
+  default set; ask for them by name.
 * `upstream+reuse` – the same driver with one prepared statement reused for
   every row. It has no statement cache, so this is the closest thing to giving
   it one, and it separates the cache's share of the improvement from the
@@ -75,6 +79,16 @@ holds across the machines it has been run on:
 
 The remaining insert cost on storage is the actual file writes, around
 60 MB/s in this environment.
+
+### Page size, unfinished
+
+Larger pages cut the insert time substantially (roughly a third at 16 KiB and
+40 % at 32 KiB in one three-run set), with reads unchanged. That is tempting
+but not yet a reason to change the driver's default, because this benchmark
+inserts many rows sequentially in one transaction, which is the friendliest
+possible workload for large pages. A rollback journal rewrites whole pages, so
+gomuks' many small updates (room upserts, receipts, read markers) pay the page
+size on every change. Measure that pattern before touching the default.
 
 ## Repeating it
 
