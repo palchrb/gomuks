@@ -18,6 +18,35 @@ import { createRoot } from "react-dom/client"
 import App from "./App.tsx"
 import "./index.css"
 
+// Views like the image pack editor are loaded on demand, from files whose
+// names contain a build hash. Deploying a new build removes the old files, so
+// a page that was already open when that happened asks for something that is
+// gone and the view fails to render. Reload instead, which picks up the new
+// build. The timestamp guard keeps a chunk that is missing for some other
+// reason from turning into a reload loop.
+const RELOAD_KEY = "gomuks_stale_frontend_reload"
+const RELOAD_COOLDOWN_MS = 60_000
+window.addEventListener("vite:preloadError", evt => {
+	let lastReload = 0
+	try {
+		lastReload = Number(sessionStorage.getItem(RELOAD_KEY)) || 0
+	} catch {
+		// Storage can be unavailable; reloading once is still better than failing.
+	}
+	if (Date.now() - lastReload < RELOAD_COOLDOWN_MS) {
+		console.error("Failed to load part of the app again, not reloading", evt.payload)
+		return
+	}
+	try {
+		sessionStorage.setItem(RELOAD_KEY, Date.now().toString())
+	} catch {
+		// Ignore, see above.
+	}
+	console.warn("Failed to load part of the app, probably an old build, reloading", evt.payload)
+	evt.preventDefault()
+	window.location.reload()
+})
+
 createRoot(document.getElementById("root")!).render(
 	<StrictMode>
 		<App/>

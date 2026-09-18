@@ -181,6 +181,12 @@ busy rooms with no message to sort or preview by, and any limited sync (which
 happens whenever a suspended tab resumes) trimmed the stored timeline down to
 it. The window is the same as the native build's.
 
+**"Failed to render ...: error loading dynamically imported module".** The
+page was open when a new build was deployed, and parts of the app that load
+on demand live in files whose names contain a build hash, which the deploy
+replaced. The page now reloads itself when this happens; if you see the
+message anyway, reload manually.
+
 **A room sits in the wrong place in the room list on one device only.** The
 room list is restored from an IndexedDB cache on every load, and the backend
 then sends only rooms changed since the cached timestamp. An older build
