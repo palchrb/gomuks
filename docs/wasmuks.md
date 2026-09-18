@@ -193,14 +193,19 @@ rather than failing with "error loading dynamically imported module".
 Both checks work behind any static server, as long as `index.html` is served
 without long-lived caching.
 
-**An avatar or an image stays broken while others load.** A failed download
-used to be stored in the media cache as an error and served from then on, so
-one slow or interrupted fetch broke that image permanently. Failures are no
-longer cached there. Instead the backend remembers them the way the server
-build does, with a backoff that starts at a few seconds and grows to a week,
-so a file the homeserver no longer has is not re-requested on every render.
-An entry left over from the old behaviour is discarded on the next attempt,
-so this heals itself once the new build is loaded.
+**An avatar stays as the generated letter, or an image stays broken, while
+others load.** A failed download used to leave something permanent in the
+media cache: first an error response, then, once the backoff was added, the
+fallback letter avatar. Either way that one download could never succeed
+again.
+
+Both are fixed, and the behaviour now matches the server build. A failure is
+remembered by the backend with a backoff starting at a few seconds and
+growing to a week, so a file the homeserver no longer has is not re-requested
+on every render. While the backoff lasts, the letter avatar is served and
+cached, but only until the next attempt is due, which is what the server
+build achieves with a `Cache-Control` max-age. Anything left over from the
+old behaviour is discarded, so this heals itself once the new build loads.
 
 **A room sits in the wrong place in the room list on one device only.** The
 room list is restored from an IndexedDB cache on every load, and the backend

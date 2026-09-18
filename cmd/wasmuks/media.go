@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall/js"
+	"time"
 
 	"github.com/rs/zerolog"
 	"go.mau.fi/util/jsontime"
@@ -96,6 +97,13 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 	encrypted, _ := strconv.ParseBool(query.Get("encrypted"))
 	useThumbnail := query.Get("thumbnail") == "avatar"
 	fallback := query.Get("fallback")
+	// Set when the fallback is served because a download failed, to the time
+	// the next attempt is allowed. The server build does the same thing with a
+	// Cache-Control max-age on the fallback response, so the browser shows the
+	// letter avatar for exactly as long as the backoff lasts and then asks
+	// again. The Cache API has no expiry of its own, so the time is carried in
+	// a header and checked by the service worker.
+	var retryAfter float64
 	if fallback != "" {
 		fallbackParts := strings.Split(fallback, ":")
 		defer func() {
@@ -104,11 +112,15 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 				data := gomuks.MakeFallbackAvatar(fallbackParts[0], fallbackParts[1])
 				buf := js.Global().Get("Uint8Array").New(len(data))
 				js.CopyBytesToJS(buf, data)
-				callbacks.Call("resolve", js.ValueOf(map[string]any{
+				resp := map[string]any{
 					"buffer":             buf,
 					"contentType":        "image/svg+xml",
 					"contentDisposition": "",
-				}))
+				}
+				if retryAfter > 0 {
+					resp["retryAfter"] = retryAfter
+				}
+				callbacks.Call("resolve", js.ValueOf(resp))
 				resolved = true
 			}
 		}()
@@ -133,12 +145,13 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 			Int("attempts", cacheEntry.Error.Attempts).
 			Time("last_attempt", cacheEntry.Error.ReceivedAt.Time).
 			Msg("Not retrying media download yet")
+		retryAfter = float64(cacheEntry.Error.NextRetry().UnixMilli())
 		return
 	}
 	resp, err := gmx.Client.Client.Download(mautrix.WithMaxRetries(ctx, 0), mxc)
 	if err != nil {
 		log.Err(err).Msg("Failed to download media")
-		rememberMediaError(ctx, mxc, cacheEntry)
+		retryAfter = float64(rememberMediaError(ctx, mxc, cacheEntry).UnixMilli())
 		return
 	}
 	defer func() {
@@ -190,7 +203,7 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 // an incremented attempt count, which is what database.MediaError's backoff is
 // calculated from. Mirrors addErrorToCacheEntry in pkg/gomuks/mediadownload.go,
 // minus the HTTP specifics that only the server build needs.
-func rememberMediaError(ctx context.Context, mxc id.ContentURI, cacheEntry *database.Media) {
+func rememberMediaError(ctx context.Context, mxc id.ContentURI, cacheEntry *database.Media) time.Time {
 	log := zerolog.Ctx(ctx)
 	if cacheEntry == nil {
 		cacheEntry = &database.Media{MXC: mxc}
@@ -211,6 +224,7 @@ func rememberMediaError(ctx context.Context, mxc id.ContentURI, cacheEntry *data
 	if err := gmx.Client.DB.Media.Put(ctx, cacheEntry); err != nil {
 		log.Err(err).Msg("Failed to save errored media cache entry")
 	}
+	return cacheEntry.Error.NextRetry()
 }
 
 func jsDownloadCallback(_ js.Value, args []js.Value) any {

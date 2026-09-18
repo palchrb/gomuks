@@ -119,6 +119,16 @@ func (me *MediaError) backoff() time.Duration {
 	return min(time.Duration(2<<me.Attempts)*time.Second, MaxMediaBackoff)
 }
 
+// NextRetry is when the backoff expires and a download may be attempted
+// again. The server build sends it to clients as a Cache-Control max-age;
+// the wasm build carries it to its media cache the same way.
+func (me *MediaError) NextRetry() time.Time {
+	if me == nil {
+		return time.Time{}
+	}
+	return me.ReceivedAt.Add(me.backoff())
+}
+
 func (me *MediaError) UseCache() bool {
 	return me != nil && time.Since(me.ReceivedAt.Time) < me.backoff()
 }

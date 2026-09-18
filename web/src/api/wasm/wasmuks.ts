@@ -22,6 +22,9 @@ interface MediaResponse {
 	buffer: Uint8Array<ArrayBuffer>
 	contentType: string
 	contentDisposition: string
+	// Set on a fallback avatar served because the download failed: the epoch
+	// milliseconds at which another attempt is allowed.
+	retryAfter?: number
 }
 
 declare global {
@@ -39,6 +42,8 @@ declare global {
 }
 
 const MEDIA_CACHE_NAME = "wasmuks-media-v1"
+// Must match the name in public/wasmuks-media-sw.js.
+const RETRY_AFTER_HEADER = "X-Gomuks-Retry-After"
 
 // Cache key for a media URL: the path plus the thumbnail parameter, so the
 // thumbnail and the full image are separate entries but other parameters
@@ -72,6 +77,13 @@ async function setupMediaChannel() {
 			}
 			if (result.contentDisposition) {
 				headers["Content-Disposition"] = result.contentDisposition
+			}
+			if (result.retryAfter) {
+				// A fallback avatar served because the download failed. The
+				// Cache API has no expiry, so the service worker checks this
+				// and asks again once the backoff is over, which is what the
+				// server build gets from a Cache-Control max-age.
+				headers[RETRY_AFTER_HEADER] = String(result.retryAfter)
 			}
 			await cache.put(cacheKey, new Response(result.buffer, { status: 200, headers }))
 			bc.postMessage({ type: "response", url: evt.data.url })

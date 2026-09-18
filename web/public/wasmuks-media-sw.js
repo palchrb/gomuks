@@ -19,6 +19,9 @@ self.addEventListener("activate", (event) => event.waitUntil(clients.claim()))
 // Opened per request rather than held: logout deletes the whole cache, and a
 // handle from before that keeps pointing at the deleted (now empty) cache.
 const MEDIA_CACHE_NAME = "wasmuks-media-v1"
+// Set by the worker on a fallback avatar served because the download failed,
+// holding the time another attempt is allowed. Must match wasmuks.ts.
+const RETRY_AFTER_HEADER = "X-Gomuks-Retry-After"
 const bc = new BroadcastChannel("wasmuks-media-download")
 const mediaPromises = new Map()
 
@@ -83,10 +86,22 @@ function mediaCacheKey(url) {
 	return key.href
 }
 
+// A fallback avatar is only good until the backoff on the failed download
+// expires, which is how long the server build tells browsers to cache it for.
+function isExpired(response) {
+	const retryAfter = Number(response.headers.get(RETRY_AFTER_HEADER))
+	return retryAfter > 0 && Date.now() >= retryAfter
+}
+
 async function serveFromCache(request) {
 	const cache = await caches.open(MEDIA_CACHE_NAME)
 	const cacheKey = mediaCacheKey(request.url)
 	let hit = await cache.match(cacheKey)
+	if (hit && isExpired(hit)) {
+		console.log("Cached fallback expired for", request.url)
+		await cache.delete(cacheKey)
+		hit = undefined
+	}
 	if (hit && !hit.ok) {
 		// An older version stored failed downloads as an error response, which
 		// made one bad download permanent. Drop those and try again.
