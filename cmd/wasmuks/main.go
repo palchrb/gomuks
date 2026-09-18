@@ -35,6 +35,7 @@ import (
 	"go.mau.fi/util/exstrings"
 	"go.mau.fi/util/ptr"
 	"go.mau.fi/zeroconfig"
+	"maunium.net/go/mautrix/event"
 
 	"go.mau.fi/gomuks/pkg/gomuks"
 	"go.mau.fi/gomuks/pkg/hicli"
@@ -63,6 +64,29 @@ func postMessage(cmd jsoncmd.Name, reqID int64, data any) {
 	}))
 }
 
+// recoverCommandPanic keeps a panic in one command from taking the whole
+// client down. The server build recovers per command and only drops that
+// connection; here there is no connection to drop, and an unrecovered panic
+// exits the Go runtime and forces the user to reload.
+func recoverCommandPanic(action string, reqID int64) {
+	err := recover()
+	if err == nil {
+		return
+	}
+	logEvt := gmx.Log.Error().
+		Bytes(zerolog.ErrorStackFieldName, debug.Stack()).
+		Str("action", action)
+	if realErr, ok := err.(error); ok {
+		logEvt = logEvt.Err(realErr)
+	} else {
+		logEvt = logEvt.Any(zerolog.ErrorFieldName, err)
+	}
+	logEvt.Msg("Panic while handling command")
+	postMessage(jsoncmd.RespError, reqID, ptr.Ptr(gomuks.ToRespError(
+		fmt.Errorf("panic while handling %s: %v", action, err),
+	)))
+}
+
 func jsMessageListener(_ js.Value, args []js.Value) any {
 	data := args[0].Get("data")
 	wrappedCmd := &hicli.JSONCommand{
@@ -77,6 +101,7 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 		payload := make([]byte, payloadVal.Length())
 		js.CopyBytesToGo(payload, payloadVal)
 		go func() {
+			defer recoverCommandPanic("upload", wrappedCmd.RequestID)
 			ctx := gmx.Log.With().Str("action", "wasmuks upload").Logger().WithContext(context.Background())
 			resp, err := uploadMedia(ctx, fileName, encrypt, payload)
 			if err != nil {
@@ -91,6 +116,7 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 		// The native server streams this over an HTTP endpoint; in wasm the
 		// progress goes out as events and the final state as the response.
 		go func() {
+			defer recoverCommandPanic("restore key backup", wrappedCmd.RequestID)
 			ctx := gmx.Log.With().Str("action", "restore key backup").Logger().WithContext(context.Background())
 			resp, err := jsoncmd.RestoreKeyBackup.RunCtx(ctx, wrappedCmd.Data, restoreKeyBackup(wrappedCmd.RequestID))
 			if err != nil {
@@ -102,6 +128,7 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 		return nil
 	}
 	go func() {
+		defer recoverCommandPanic(string(wrappedCmd.Command), wrappedCmd.RequestID)
 		resp := gmx.Client.SubmitJSONCommand(context.Background(), wrappedCmd)
 		postMessage(resp.Command, resp.RequestID, resp.Data)
 	}()
@@ -274,6 +301,15 @@ func main() {
 				Type: zeroconfig.WriterTypeJS,
 			}},
 			Timestamp: ptr.Ptr(false),
+		},
+		// The same defaults the server build uses. Without the presence one
+		// the client sends no set_presence at all, and the homeserver then
+		// tells everyone you are online whenever the tab is open.
+		Matrix: gomuks.MatrixConfig{
+			SetPresence: ptr.Ptr(event.PresenceOffline),
+		},
+		Media: gomuks.MediaConfig{
+			ThumbnailSize: 120,
 		},
 	}
 	initParams = readInit()

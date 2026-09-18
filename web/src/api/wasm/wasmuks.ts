@@ -22,6 +22,8 @@ interface MediaResponse {
 	buffer: Uint8Array<ArrayBuffer>
 	contentType: string
 	contentDisposition: string
+	// The sandbox policy the server build sets on media responses.
+	csp?: string
 	// Set on a fallback avatar served because the download failed: the epoch
 	// milliseconds at which another attempt is allowed.
 	retryAfter?: number
@@ -77,6 +79,13 @@ async function setupMediaChannel() {
 			}
 			if (result.contentDisposition) {
 				headers["Content-Disposition"] = result.contentDisposition
+			}
+			if (result.csp) {
+				// Media is served from the same origin as the app, which is
+				// where the database and the pickle key live, so an HTML or
+				// SVG attachment must not be allowed to run anything. The
+				// server build sets the same policy on every media response.
+				headers["Content-Security-Policy"] = result.csp
 			}
 			if (result.retryAfter) {
 				// A fallback avatar served because the download failed. The

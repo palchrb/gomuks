@@ -25,8 +25,10 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall/js"
@@ -116,6 +118,7 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 					"buffer":             buf,
 					"contentType":        "image/svg+xml",
 					"contentDisposition": "",
+					"csp":                database.MediaContentSecurityPolicy,
 				}
 				if retryAfter > 0 {
 					resp["retryAfter"] = retryAfter
@@ -170,10 +173,25 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 		}
 	}
 	contentType := resp.Header.Get("Content-Type")
-	contentDisposition := resp.Header.Get("Content-Disposition")
 	if cacheEntry != nil && cacheEntry.MimeType != "" {
 		contentType = cacheEntry.MimeType
 	}
+	// The disposition is decided here rather than taken from the homeserver,
+	// the same as the server build does in Media.ToHeaders: anything that
+	// isn't on the safe list is a download rather than something the browser
+	// renders in place.
+	dispositionEntry := &database.Media{MimeType: contentType}
+	if cacheEntry != nil {
+		dispositionEntry.FileName = cacheEntry.FileName
+	}
+	if dispositionEntry.FileName == "" {
+		_, respDisposition, _ := mime.ParseMediaType(resp.Header.Get("Content-Disposition"))
+		dispositionEntry.FileName = respDisposition["filename"]
+	}
+	contentDisposition := mime.FormatMediaType(
+		dispositionEntry.ContentDisposition(),
+		map[string]string{"filename": dispositionEntry.FileName},
+	)
 	if useThumbnail && strings.HasPrefix(contentType, "image/") {
 		thumbnail, thumbnailType, err := gomuks.MakeAvatarThumbnail(data, cmp.Or(gmx.Config.Media.ThumbnailSize, 120))
 		if err != nil {
@@ -190,6 +208,7 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 		"buffer":             buf,
 		"contentType":        contentType,
 		"contentDisposition": contentDisposition,
+		"csp":                database.MediaContentSecurityPolicy,
 	}))
 	resolved = true
 	log.Debug().
@@ -230,12 +249,27 @@ func rememberMediaError(ctx context.Context, mxc id.ContentURI, cacheEntry *data
 func jsDownloadCallback(_ js.Value, args []js.Value) any {
 	path := args[0].String()
 	query := args[1].String()
+	callbacks := args[2]
 	ctx := gmx.Log.With().
 		Str("action", "wasmuks download").
 		Str("path", path).
 		Str("query", query).
 		Logger().
 		WithContext(context.Background())
-	go realJSDownloadCallback(ctx, path, query, args[2])
+	go func() {
+		// A panic here would otherwise exit the Go runtime and take the whole
+		// client with it. The callback rejects, which shows the fallback
+		// avatar or a broken image.
+		defer func() {
+			if err := recover(); err != nil {
+				zerolog.Ctx(ctx).Error().
+					Bytes(zerolog.ErrorStackFieldName, debug.Stack()).
+					Any(zerolog.ErrorFieldName, err).
+					Msg("Panic while downloading media")
+				callbacks.Call("reject")
+			}
+		}()
+		realJSDownloadCallback(ctx, path, query, callbacks)
+	}()
 	return nil
 }

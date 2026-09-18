@@ -208,10 +208,16 @@ func (m *Media) ToHeaders(h http.Header, thumbnail bool) {
 		}
 		h.Set("Content-Disposition", mime.FormatMediaType(m.ContentDisposition(), map[string]string{"filename": m.FileName}))
 	}
-	h.Set("Content-Security-Policy", "sandbox; default-src 'none'; script-src 'none'; media-src 'self';")
+	h.Set("Content-Security-Policy", MediaContentSecurityPolicy)
 	h.Set("Cache-Control", "max-age=2592000, immutable")
 	h.Set("ETag", m.ETag(thumbnail))
 }
+
+// MediaContentSecurityPolicy keeps downloaded media from doing anything on
+// the origin it is served from, which matters most for HTML and SVG
+// attachments. Exported so frontends that don't serve media over HTTP can
+// apply the same policy.
+const MediaContentSecurityPolicy = "sandbox; default-src 'none'; script-src 'none'; media-src 'self';"
 
 var safeMimes = []string{
 	"text/css", "text/plain", "text/csv",
