@@ -238,25 +238,29 @@ Not done, kept as options:
   the server forwards "new message in room X" without ever holding keys or
   content.
 * **Smaller binary.** The only lever on startup time in a browser without a
-  compiled-code cache, which is to say Safari. Measured by building each
-  library on its own for `js/wasm` and subtracting an empty program, and for
-  the highlighter also subtracting `regexp` and `encoding/xml`, which it
-  brings in but nothing else in the wasm build needs:
+  compiled-code cache, which is to say Safari. Measured by building
+  `cmd/wasmuks` with the syntax highlighter stubbed out, against the same
+  commit unchanged:
 
   | | uncompressed | gzipped |
   |---|---|---|
-  | current module | 30.4 MB | 7.1 MB |
-  | syntax highlighting (chroma, 353 embedded lexers) | 7.4 MB | 1.7 MB |
-  | markdown on send (goldmark with GFM) | 1.2 MB | 0.3 MB |
+  | as it ships | 30.4 MB | 7.0 MB |
+  | without syntax highlighting | 25.6 MB | 6.0 MB |
+  | saving | 4.8 MB, 16 % | 1.0 MB, 15 % |
 
-  So both together are a little over a quarter of the module. Neither is
-  optional in the sense of a build flag: the highlighter runs when incoming
-  HTML is sanitized, and the markdown parser when a message is sent, so
-  dropping them means doing both in the frontend instead. `wasm-opt -Oz` is
-  separate and untested here.
-* **Don't block on startup**: the room list is restored from IndexedDB before
-  the worker is even created, but the app still shows a full-screen spinner
-  until the backend reports ready. It could render what it has.
+  Most of that is data rather than code: chroma embeds 353 language
+  definitions, about 2.5 MB of XML, and they all come along because the lexer
+  is looked up by name at runtime. Highlighting runs when incoming HTML is
+  sanitized, so dropping it means code blocks in messages you read lose their
+  colours unless the frontend takes over.
+
+  Markdown is not separable the same way. goldmark reaches the build through
+  mautrix's `format` package, which hicli uses for rendering, parsing and
+  HTML-to-markdown conversion, so removing it means replacing that package
+  rather than stubbing a call. On its own it is 1.2 MB uncompressed, which is
+  the ceiling on what that would save.
+
+  `wasm-opt -Oz` is the other half of this and has not been measured here.
 * **Native gomuks per user** as a compose file, for people who use the
   server machine itself as a client.
 * **Upstream**: `pkg/sqlite-wasm-js/stmt.go` at the version this fork started
