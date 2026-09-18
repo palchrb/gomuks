@@ -13,6 +13,10 @@ Variants, in the order they build on each other:
 * `upstream` – the driver as it stood in gomuks v26.09, copied verbatim into
   `upstream/`: one crossing into JavaScript per value, no statement cache,
   normal locking and a rollback journal.
+* `nosync`, `journalmem` – the shipping configuration without the flush at the
+  end of each write, and with the rollback journal held in memory. Both trade
+  durability for speed and exist to show where the time in a small write goes,
+  not as recommendations.
 * `page4k` … `page64k` – the shipping configuration with a different SQLite
   page size. The sqlite-wasm build already defaults to 8 KiB rather than
   SQLite's usual 4 KiB, and the `page4k` variant shows why. Not part of the
@@ -93,10 +97,21 @@ it only applies to databases created afterwards unless something runs VACUUM.
 
 ### The expensive thing is small writes
 
-A single-row update in its own transaction costs around 3 ms, against
-0.06 ms for a point lookup. Five hundred of them outweigh inserting two
-thousand rows and reading them back, several times over. Whatever is worth
-optimising next is in there, not in the page size.
+A single-row update in its own transaction costs a few milliseconds, against
+well under a tenth of that for a point lookup. Five hundred of them outweigh
+inserting two thousand rows and reading them back, several times over.
+
+The `nosync` and `journalmem` variants say where that time goes. Skipping the
+flush at the end of each write saves little; holding the rollback journal in
+memory instead of a file cuts the same work by about six times. So it is the
+journal file, not the flush.
+
+That is not a licence to move the journal into memory. It is the file that
+lets SQLite undo a half-finished write, and a browser tab can be killed at any
+moment. The safe version of the same saving is to write less often: the
+benchmark does the same five hundred updates a second time inside one
+transaction, and that is about seven times faster with no change in
+durability. If small writes ever show up in a profile, that is the direction.
 
 ## Repeating it
 

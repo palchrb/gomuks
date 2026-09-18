@@ -14,12 +14,13 @@ const execFileAsync = promisify(execFile)
 const runs = Number(process.argv[2] ?? 10)
 const rows = process.argv[3] ?? "2000"
 const variants = process.argv[4] ?? ""
-const metrics = ["insert_ms", "select_all_ms", "point_lookup_ms", "update_ms"]
+const metrics = ["insert_ms", "select_all_ms", "point_lookup_ms", "update_ms", "update_batched_ms"]
 const metricNames = {
 	insert_ms: `insert ${rows} rows`,
 	select_all_ms: `read ${rows} rows`,
 	point_lookup_ms: "500 lookups",
 	update_ms: "500 updates",
+	update_batched_ms: "500 in one txn",
 }
 
 if (!Number.isInteger(runs) || runs < 1) {

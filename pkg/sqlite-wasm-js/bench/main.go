@@ -13,6 +13,8 @@
 //	current+exclusive+persist  - this driver with its defaults: what gomuks ships
 //	page4k .. page64k          - the shipping configuration with a different SQLite
 //	                             page size; the sqlite-wasm build defaults to 8 KiB
+//	nosync                     - the shipping configuration without flushing each write
+//	journalmem                 - the shipping configuration with the journal in memory
 //
 // upstream vs current isolates the bridge; the two +exclusive+persist variants
 // isolate the locking mode. Every variant also runs against an in-memory
@@ -306,6 +308,24 @@ func benchDriver(driverName, tag, mode string, n int, reuse bool, extraPragmas s
 			return nil, fmt.Errorf("update %d did not apply: unread_type is %d", i, unreadType)
 		}
 	}
+
+	// --- the same updates, but in one transaction ---
+	// The difference between this and the phase above is what the application
+	// could save by collecting small writes instead of committing each one.
+	start = time.Now()
+	tx, err = db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < updates; i++ {
+		if _, err = tx.Exec(updateQuery, (i+1)%4, eventID(i)); err != nil {
+			return nil, fmt.Errorf("batched update %d: %w", i, err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	res["update_batched_ms"] = ms(time.Since(start))
 	return res, nil
 }
 
@@ -359,6 +379,23 @@ func runVariant(variant, mode string, n int) (result, error) {
 		}
 		// Driver defaults (EXCLUSIVE locking, PERSIST journal).
 		return benchDriver(currentDriver, "curx", mode, n, false, "PRAGMA foreign_keys = ON")
+	case "nosync":
+		if mode == "memory" {
+			return nil, nil
+		}
+		// The shipping configuration without the flush at the end of each
+		// write. Faster, and a tab killed mid-write can corrupt the database.
+		return benchDriver(currentDriver, variant, mode, n, false,
+			"PRAGMA synchronous = OFF;PRAGMA foreign_keys = ON")
+	case "journalmem":
+		if mode == "memory" {
+			return nil, nil
+		}
+		// The shipping configuration with the rollback journal held in memory
+		// instead of a file, so a small write touches only the database file.
+		// Same risk: nothing on disk to roll back with.
+		return benchDriver(currentDriver, variant, mode, n, false,
+			"PRAGMA journal_mode = MEMORY;PRAGMA foreign_keys = ON")
 	case "page4k", "page16k", "page32k", "page64k":
 		if mode == "memory" {
 			return nil, nil
