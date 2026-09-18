@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import { use, useEffect, useRef, useState } from "react"
+import ClientContext from "../ClientContext.ts"
 import { ModalCloseContext } from "../modal"
 import DeleteIcon from "@/icons/delete.svg?react"
 import PauseIcon from "@/icons/pause.svg?react"
@@ -25,9 +26,8 @@ interface VoiceRecorderProps {
 	onFinish: (file: File, isVoice?: true) => void
 }
 
-// The server build converts the recording to ogg/opus, so the name matched
-// that. Without ffmpeg the recording is sent as it was made, and the name has
-// to match the bytes or clients guess the format wrong.
+// Maps a recording's container to a file extension, for the builds that send
+// the recording as it was made rather than converting it.
 function extensionFor(mime: string): string {
 	if (mime.startsWith("audio/ogg") || mime.startsWith("video/ogg")) {
 		return ".ogg"
@@ -50,6 +50,7 @@ function chooseMime() {
 }
 
 const VoiceRecorder = ({ onFinish }: VoiceRecorderProps) => {
+	const client = use(ClientContext)!
 	const [recording, setRecording] = useState<boolean>(false)
 	const [duration, setDuration] = useState(0)
 	const recorder = useRef<MediaRecorder>(null)
@@ -107,7 +108,11 @@ const VoiceRecorder = ({ onFinish }: VoiceRecorderProps) => {
 		if (!recorder.current) {
 			return
 		}
-		const file = new File(blobs.current, `Voice message${extensionFor(recorder.current.mimeType)}`, {
+		// The server build converts the recording to ogg/opus, so the name has
+		// to match that result, not the recording. Without ffmpeg nothing is
+		// converted and the name has to match the bytes instead.
+		const extension = client.rpc.rpcMediaUpload ? extensionFor(recorder.current.mimeType) : ".ogg"
+		const file = new File(blobs.current, `Voice message${extension}`, {
 			type: recorder.current.mimeType,
 		})
 		onFinish(file, true)
