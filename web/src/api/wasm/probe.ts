@@ -36,8 +36,38 @@ const THUMBNAIL_QUALITY = 0.8
 const THUMBNAIL_MAX_EDGE = 800
 // What the server build asks ffmpeg for: one value per bucket, 0 to 256.
 const WAVEFORM_MAX = 256
+// Buckets louder than this share of the recording are clipped to the top,
+// which keeps a click at either end from deciding the scale for everything.
+const WAVEFORM_PERCENTILE = 0.95
 const WAVEFORM_MIN_BUCKETS = 30
 const WAVEFORM_MAX_BUCKETS = 120
+
+// Everything but the buckets is scaled relative to how loud the recording
+// actually is, because speech peaks far below full scale and would otherwise
+// draw a flat line. The reference is a high percentile rather than the
+// loudest sample: stopping a recording usually leaves a click, and dividing
+// by that one spike flattens everything else again. Loudness per bucket is
+// the root mean square rather than the peak, for the same reason.
+export function computeWaveform(samples: Float32Array, buckets: number): number[] {
+	const perBucket = Math.max(Math.floor(samples.length / buckets), 1)
+	const loudness: number[] = []
+	for (let i = 0; i < buckets; i++) {
+		const start = i * perBucket
+		const end = Math.min(start + perBucket, samples.length)
+		let sumOfSquares = 0
+		for (let j = start; j < end; j++) {
+			sumOfSquares += samples[j] * samples[j]
+		}
+		loudness.push(end > start ? Math.sqrt(sumOfSquares / (end - start)) : 0)
+	}
+	const sorted = [...loudness].sort((a, b) => a - b)
+	const reference = sorted[Math.floor(sorted.length * WAVEFORM_PERCENTILE)] || sorted[sorted.length - 1]
+	if (!reference) {
+		return loudness.map(() => 0)
+	}
+	return loudness.map(value =>
+		Math.max(Math.min(Math.round((value / reference) * WAVEFORM_MAX), WAVEFORM_MAX), 0))
+}
 
 function waitForEvent(target: EventTarget, event: string, timeoutMS = 10_000): Promise<void> {
 	return new Promise((resolve, reject) => {
@@ -119,30 +149,7 @@ async function probeAudio(file: Blob, wantWaveform: boolean): Promise<MediaProbe
 			Math.max(Math.floor((probe.duration_ms ?? 0) / 125), WAVEFORM_MIN_BUCKETS),
 			WAVEFORM_MAX_BUCKETS,
 		)
-		const samples = decoded.getChannelData(0)
-		const perBucket = Math.max(Math.floor(samples.length / buckets), 1)
-		const peaks: number[] = []
-		let loudest = 0
-		for (let i = 0; i < buckets; i++) {
-			let peak = 0
-			const start = i * perBucket
-			for (let j = start; j < start + perBucket && j < samples.length; j++) {
-				const value = Math.abs(samples[j])
-				if (value > peak) {
-					peak = value
-				}
-			}
-			peaks.push(peak)
-			if (peak > loudest) {
-				loudest = peak
-			}
-		}
-		// Scaled against the loudest part rather than against full scale.
-		// Speech into a laptop microphone peaks far below it, which would
-		// otherwise draw a flat line of zeroes and ones.
-		probe.waveform = peaks.map(peak => loudest > 0
-			? Math.min(Math.round((peak / loudest) * WAVEFORM_MAX), WAVEFORM_MAX)
-			: 0)
+		probe.waveform = computeWaveform(decoded.getChannelData(0), buckets)
 		return probe
 	} finally {
 		await audioCtx.close()
