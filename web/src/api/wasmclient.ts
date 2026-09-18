@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import { CachedEventDispatcher } from "@/util/eventdispatcher.ts"
 import RPCClient, { ConnectionEvent } from "./rpc.ts"
-import type { BaseRPCCommand, MediaMessageEventContent, RPCCommand } from "./types"
+import type { BaseRPCCommand, MediaMessageEventContent, RPCCommand, SyncStatus } from "./types"
 import WasmuksWorker from "./wasm/wasmuks.ts?worker"
 
 export interface StorageStatus {
@@ -81,6 +81,10 @@ async function loadWasmConfig(): Promise<Partial<WasmuksInit>> {
 }
 
 const LOCK_NAME = "gomuks-wasm"
+// How long after the page becomes visible again a failing sync is shown as
+// "reconnecting" (the same overlay the native build shows for a dropped
+// backend connection) instead of the red "sync is failing" banner.
+const RESUME_GRACE_MS = 30_000
 
 interface WasmConnectionCommand extends BaseRPCCommand<ConnectionEvent> {
 	command: "wasm-connection"
@@ -101,6 +105,12 @@ export default class WasmClient extends RPCClient {
 	// room list restored from IndexedDB) wait here until Go reports ready.
 	#ready = false
 	#pending: object[] = []
+	// In the wasm build the backend lives in the tab, so backgrounding the
+	// PWA suspends the /sync long poll; it fails once on resume before the
+	// next one succeeds. Track resumes so that first failure is presented as
+	// reconnecting rather than as an error.
+	#lastResumedAt = Date.now()
+	#showingReconnect = false
 
 	async start() {
 		// The OPFS SAH pool gives exclusive file handles to one worker, so a
@@ -136,6 +146,7 @@ export default class WasmClient extends RPCClient {
 		}
 		this.#worker = new WasmuksWorker({ name: JSON.stringify(init) })
 		this.#worker.addEventListener("message", this.#onMessage)
+		document.addEventListener("visibilitychange", this.#onVisibilityChange)
 		this.#checkStorage().catch(err => console.warn("Failed to check storage status", err))
 		navigator.serviceWorker.register("wasmuks-media-sw.js").then(reg => {
 			console.info("Media service worker registered", reg)
@@ -209,6 +220,29 @@ export default class WasmClient extends RPCClient {
 		})
 	}
 
+	#onVisibilityChange = () => {
+		if (document.visibilityState === "visible") {
+			this.#lastResumedAt = Date.now()
+		}
+	}
+
+	#handleSyncStatus(status: SyncStatus) {
+		const resumeGrace = status.type === "erroring"
+			&& status.error_count <= 2
+			&& Date.now() < this.#lastResumedAt + RESUME_GRACE_MS
+		if (resumeGrace && !this.#showingReconnect) {
+			this.#showingReconnect = true
+			this.connect.emit({
+				connected: true,
+				reconnecting: true,
+				error: "Connection to the homeserver was interrupted",
+			})
+		} else if (!resumeGrace && this.#showingReconnect) {
+			this.#showingReconnect = false
+			this.connect.emit({ connected: true, reconnecting: false, error: null })
+		}
+	}
+
 	#onMessage = (evt: MessageEvent<RawJSONCommand | WasmConnectionCommand>) => {
 		let realEvtData: RPCCommand | WasmConnectionCommand
 		if (typeof evt.data.data === "string") {
@@ -234,15 +268,20 @@ export default class WasmClient extends RPCClient {
 			}
 			this.connect.emit(realEvtData.data)
 		} else {
+			if (realEvtData.command === "sync_status") {
+				this.#handleSyncStatus(realEvtData.data as SyncStatus)
+			}
 			this.onCommand(realEvtData)
 		}
 	}
 
 	async stop() {
+		document.removeEventListener("visibilitychange", this.#onVisibilityChange)
 		this.#worker?.terminate()
 		this.#worker = undefined
 		this.#ready = false
 		this.#pending = []
+		this.#showingReconnect = false
 		this.#releaseLock?.()
 		this.#releaseLock = undefined
 	}

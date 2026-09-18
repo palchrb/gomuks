@@ -374,6 +374,7 @@ const MainScreen = () => {
 	const [, markPendingShareChanged] = useReducer(incrementReducer, 0)
 	const client = use(ClientContext)!
 	const syncStatus = useEventAsState(client.syncStatus)
+	const connState = useEventAsState(client.rpc.connect)
 	const context = useMemo(() => new ContextFields(
 		directSetRightPanel, directSetActiveRoom, directSetSpace, pendingShareRef, markPendingShareChanged, client,
 	), [client])
@@ -462,6 +463,8 @@ const MainScreen = () => {
 		</div>
 	} else if (
 		syncStatus.type === "erroring"
+		// While the reconnecting overlay is up (wasm build after resume), don't also show the banner.
+		&& !connState?.reconnecting
 		&& (syncStatus.error_count > 2 || (syncStatus.last_sync ?? 0) + SYNC_ERROR_HIDE_DELAY < Date.now())
 	) {
 		syncLoader = <div className="sync-status errored" title={syncStatus.error}>
