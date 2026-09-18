@@ -557,18 +557,12 @@ func (h *HiClient) PaginateServer(ctx context.Context, roomID id.RoomID, limit i
 		h.WakeupRequestQueue()
 	}
 	if err == nil && newPreview != nil {
-		// Carries the event too, so the room list has it when the new
-		// preview row ID arrives.
-		h.EventHandler(&jsoncmd.SyncComplete{
-			Rooms: map[id.RoomID]*jsoncmd.SyncRoom{
-				roomID: {
-					Meta:   room,
-					Events: []*database.Event{newPreview},
-				},
-			},
-		})
-		// Info rather than debug: this corrects a visibly wrong room list
-		// entry, so it should be easy to confirm in the console.
+		// Deliberately not dispatched to clients: the corrected timestamp is
+		// older than the placeholder, so announcing it now would move the room
+		// down the list while the user is reading it. The database is correct
+		// and the mod timestamp is bumped, so the next connection (or catchup
+		// sync) picks it up and the list is simply right from then on.
+		// Info rather than debug: it corrects a visibly wrong room list entry.
 		zerolog.Ctx(ctx).Info().
 			Int64("preview_event_rowid", int64(newPreview.RowID)).
 			Time("sorting_timestamp", newPreview.Timestamp.Time).
