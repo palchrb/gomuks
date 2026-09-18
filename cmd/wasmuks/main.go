@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"runtime"
 	"runtime/debug"
+	"sync"
 	"syscall/js"
 	"time"
 
@@ -324,7 +325,9 @@ func main() {
 	gmx.RemoveDataFunc = removeData
 	gmx.EventBuffer = gomuks.NewEventBuffer(0)
 	gmx.EventBuffer.Subscribe(0, nil, func(evt *gomuks.BufferedEvent) {
-		postMessage(evt.Command, evt.RequestID, evt.Data)
+		if !holdEvent(evt) {
+			postMessage(evt.Command, evt.RequestID, evt.Data)
+		}
 	})
 	gomuks.DisablePush = true
 	js.Global().Call("addEventListener", "message", js.FuncOf(jsMessageListener))
@@ -372,10 +375,12 @@ func main() {
 		gmx.Log.Info().Int64("catchup_since", initParams.LastServerTS).Msg("Sending initial sync")
 		initStart := time.Now()
 		var roomCount int
+		startHoldingEvents()
 		for payload := range gmx.Client.GetInitialSync(ctx, 100, initParams.LastServerTS) {
 			roomCount += len(payload.Rooms)
 			postMessage(jsoncmd.EventSyncComplete, 0, payload)
 		}
+		heldCount := releaseHeldEvents()
 		postMessage(jsoncmd.EventInitComplete, 0, gmx.Client.SyncStatus.Load())
 		var stats runtime.MemStats
 		runtime.ReadMemStats(&stats)
@@ -383,10 +388,56 @@ func main() {
 			Dur("duration", time.Since(initStart)).
 			Dur("since_start", time.Since(processStart)).
 			Int("rooms", roomCount).
+			Int("held_events", heldCount).
 			Uint64("heap_alloc_mb", stats.HeapAlloc>>20).
 			Uint64("heap_sys_mb", stats.HeapSys>>20).
 			Msg("Initial room list sent")
 	}
 
 	select {}
+}
+
+// The sync loop is already running while the initial room list is read from
+// the database and posted to the frontend. A page can be read before a sync
+// commits but posted after that sync's event, in which case the stale snapshot
+// would overwrite the fresher data in the frontend (and, through the IndexedDB
+// cache and its server timestamp, stay stale across reloads). Live events are
+// therefore held back until the whole initial list is out, then replayed in
+// order: anything held was committed after the snapshot it might touch, so the
+// replay can only move state forward.
+var (
+	heldEventsLock sync.Mutex
+	holdingEvents  bool
+	heldEvents     []*gomuks.BufferedEvent
+)
+
+func holdEvent(evt *gomuks.BufferedEvent) bool {
+	heldEventsLock.Lock()
+	defer heldEventsLock.Unlock()
+	if !holdingEvents {
+		return false
+	}
+	heldEvents = append(heldEvents, evt)
+	return true
+}
+
+func startHoldingEvents() {
+	heldEventsLock.Lock()
+	holdingEvents = true
+	heldEventsLock.Unlock()
+}
+
+// releaseHeldEvents posts everything that was held, in order, and then stops
+// holding. The replay happens under the lock so an event arriving meanwhile
+// waits in holdEvent and is posted directly afterwards, never in between.
+func releaseHeldEvents() int {
+	heldEventsLock.Lock()
+	defer heldEventsLock.Unlock()
+	for _, evt := range heldEvents {
+		postMessage(evt.Command, evt.RequestID, evt.Data)
+	}
+	count := len(heldEvents)
+	heldEvents = nil
+	holdingEvents = false
+	return count
 }

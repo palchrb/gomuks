@@ -81,3 +81,27 @@ div.sync-status {
 		font-weight: bold;
 	}
 }
+
+/* wasm build: sync state as a thin line at the bottom that never covers content */
+div.sync-bar {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 10;
+	padding: .2rem .5rem calc(.2rem + var(--window-bottom-margin));
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	gap: .5rem;
+	font-size: var(--small-font-size);
+	line-height: 1.2rem;
+	background-color: var(--background-color);
+	border-top: 2px solid var(--primary-color);
+	pointer-events: none;
+
+	&.disconnected {
+		border-top-color: var(--error-color);
+		color: var(--error-color);
+	}
+}

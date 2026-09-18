@@ -173,6 +173,19 @@ To compare database modes on your own account, set
 `"wasm": {"single_connection": false}` in `config.json`, reload, and compare
 `Slow command` lines and how quickly rooms open.
 
+## Troubleshooting
+
+**A room sits in the wrong place in the room list on one device only.** The
+room list is restored from an IndexedDB cache on every load, and the backend
+then sends only rooms changed since the cached timestamp. An older build
+could let a stale room snapshot into that cache, after which nothing refreshed
+it. Reset the cache once in the browser console (F12), the room list is
+rebuilt from the database:
+
+```js
+await client.store.deleteCache(); location.reload()
+```
+
 ## Later
 
 Not done, kept as options:
@@ -187,6 +200,10 @@ Not done, kept as options:
   also shrinks V8's compiled code proportionally).
 * **Native gomuks per user** as a compose file, for people who use the
   server machine itself as a client.
+* **Upstream**: the websocket path has the same initial-sync/live-event
+  ordering race that wasmuks now guards against (`sendInitialData` runs
+  alongside the event writer); and a failed IndexedDB cache flush leaves
+  `flushing` set, so no later flush runs until reload.
 
 ## Limitations compared to the server build
 

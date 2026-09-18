@@ -19,12 +19,14 @@ import { SyncLoader } from "react-spinners"
 import Client from "@/api/client.ts"
 import { RoomListFilter, RoomStateStore } from "@/api/statestore"
 import type { EventID, RoomID } from "@/api/types"
+import WasmClient from "@/api/wasmclient.ts"
 import { useEventAsState } from "@/util/eventdispatcher.ts"
 import { hackyIsSafari } from "@/util/ismobile.ts"
 import { ensureString, ensureStringArray, parseMatrixURI } from "@/util/validation.ts"
 import ClientContext from "./ClientContext.ts"
 import MainScreenContext, { MainScreenContextFields, SetActiveRoomExtra } from "./MainScreenContext.ts"
 import StylePreferences from "./StylePreferences.tsx"
+import WasmSyncBar from "./WasmSyncBar.tsx"
 import Keybindings from "./keybindings.ts"
 import { ModalContext, ModalWrapper, NestableModalContext } from "./modal"
 import RightPanel, { RightPanelProps } from "./rightpanel/RightPanel.tsx"
@@ -374,7 +376,6 @@ const MainScreen = () => {
 	const [, markPendingShareChanged] = useReducer(incrementReducer, 0)
 	const client = use(ClientContext)!
 	const syncStatus = useEventAsState(client.syncStatus)
-	const connState = useEventAsState(client.rpc.connect)
 	const context = useMemo(() => new ContextFields(
 		directSetRightPanel, directSetActiveRoom, directSetSpace, pendingShareRef, markPendingShareChanged, client,
 	), [client])
@@ -456,15 +457,16 @@ const MainScreen = () => {
 		classNames.push("right-panel-open")
 	}
 	let syncLoader: JSX.Element | null = null
-	if (syncStatus.type === "waiting") {
+	if (client.rpc instanceof WasmClient) {
+		// The data is already local, so never cover it: a thin line at the bottom instead.
+		syncLoader = <WasmSyncBar rpc={client.rpc} syncStatus={syncStatus}/>
+	} else if (syncStatus.type === "waiting") {
 		syncLoader = <div className="sync-status waiting">
 			<SyncLoader color="var(--primary-color)"/>
 			Waiting for first sync...
 		</div>
 	} else if (
 		syncStatus.type === "erroring"
-		// While the reconnecting overlay is up (wasm build after resume), don't also show the banner.
-		&& !connState?.reconnecting
 		&& (syncStatus.error_count > 2 || (syncStatus.last_sync ?? 0) + SYNC_ERROR_HIDE_DELAY < Date.now())
 	) {
 		syncLoader = <div className="sync-status errored" title={syncStatus.error}>

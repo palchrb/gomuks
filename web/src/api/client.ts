@@ -64,13 +64,7 @@ export default class Client {
 	constructor(readonly rpc: RPCClient) {
 		this.rpc.getCachedServerTimestamp = () => this.store.serverTimestamp
 		this.rpc.event.listen(this.#handleEvent)
-		this.rpc.connect.listen(evt => {
-			if (this.rpc instanceof WasmClient && evt.connected) {
-				// The wasm backend never re-sends the initial state after a
-				// transient "reconnecting" (sync interrupted by backgrounding),
-				// so don't drop the init-complete flag for those.
-				return
-			}
+		this.rpc.connect.listen(() => {
 			this.initComplete.emit(false)
 			this.store.clearTyping()
 		})

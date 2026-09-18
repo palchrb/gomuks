@@ -71,7 +71,7 @@ function App() {
 			{!connState.reconnecting && <button onClick={() => window.location.reload()}>Reload</button>}
 			{connState.reconnecting && <div>
 				<ScaleLoader width="2rem" height="2rem" color="var(--primary-color)"/>
-				{client.rpc instanceof WasmClient ? "Reconnecting to homeserver..." : "Reconnecting to backend..."}
+				Reconnecting to backend...
 				{connState.nextAttempt ? <div><small>({connState.nextAttempt})</small></div> : null}
 			</div>}
 		</div>
