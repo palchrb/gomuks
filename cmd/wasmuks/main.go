@@ -401,10 +401,14 @@ func main() {
 // the database and posted to the frontend. A page can be read before a sync
 // commits but posted after that sync's event, in which case the stale snapshot
 // would overwrite the fresher data in the frontend (and, through the IndexedDB
-// cache and its server timestamp, stay stale across reloads). Live events are
-// therefore held back until the whole initial list is out, then replayed in
-// order: anything held was committed after the snapshot it might touch, so the
-// replay can only move state forward.
+// cache and its server timestamp, stay stale across reloads). Events that
+// carry room metadata are therefore held back until the whole initial list is
+// out, then replayed in order. A replayed event may be older than the page it
+// touches, but every later change to that room also produced a held event
+// that is replayed after it, so the frontend ends up with the newest state.
+// Other events (send status, typing, client state) don't touch room metadata
+// and pass through, so sending a message during startup still gets its
+// confirmation right away.
 var (
 	heldEventsLock sync.Mutex
 	holdingEvents  bool
@@ -412,6 +416,11 @@ var (
 )
 
 func holdEvent(evt *gomuks.BufferedEvent) bool {
+	switch evt.Data.(type) {
+	case *jsoncmd.SyncComplete, *jsoncmd.EventsDecrypted:
+	default:
+		return false
+	}
 	heldEventsLock.Lock()
 	defer heldEventsLock.Unlock()
 	if !holdingEvents {
