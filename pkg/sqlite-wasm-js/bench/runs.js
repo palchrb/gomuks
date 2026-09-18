@@ -100,6 +100,39 @@ for (const key of keys) {
 	}
 }
 
+// The three numbers most people want: where this started, where it is now,
+// and what it would be if storage were free. Locking mode is meaningless
+// without a file, so the floor uses the same driver in memory.
+const headline = [
+	["upstream wasmuks", "opfs-sahpool/upstream"],
+	["this build", "opfs-sahpool/current+exclusive+persist"],
+	["floor: no storage, in memory", "memory/current"],
+]
+if (headline.every(([, key]) => keys.includes(key))) {
+	const value = (key, metric) => median(results
+		.map(r => r[key]?.[metric])
+		.filter(v => typeof v === "number"))
+	const label = Math.max(...headline.map(([name]) => name.length))
+	console.log("\nSummary, median of the runs, milliseconds\n")
+	console.log(
+		"".padEnd(label),
+		...metrics.map(m => metricNames[m].padStart(16)),
+	)
+	for (const [name, key] of headline) {
+		console.log(
+			name.padEnd(label),
+			...metrics.map(m => value(key, m).toFixed(1).padStart(16)),
+		)
+	}
+	console.log(
+		"improvement".padEnd(label),
+		...metrics.map(m => {
+			const factor = value(headline[0][1], m) / value(headline[1][1], m)
+			return `${factor.toFixed(1)}x`.padStart(16)
+		}),
+	)
+}
+
 const crossings = results.map(r => r.crossing).filter(Boolean)
 if (crossings.length > 0) {
 	const ints = crossings.map(c => c.call_int_ns).filter(v => typeof v === "number")

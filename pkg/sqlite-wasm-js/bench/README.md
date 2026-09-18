@@ -41,6 +41,19 @@ Chromium comes from Playwright (`npx playwright install chromium`); set
 
 ## What the numbers say
 
+Measured on a Raspberry Pi, median of ten runs, 2000 rows, milliseconds:
+
+| | insert 2000 rows | read 2000 rows | 500 single-row lookups |
+|---|---|---|---|
+| upstream wasmuks | 1496 | 802 | 1234 |
+| this build | 545 | 89 | 70 |
+| floor: no storage, database in memory | 298 | 88 | 69 |
+| improvement | 2.7x | 9.0x | 17.6x |
+
+Reads and lookups have reached the floor, so nothing is left to win there.
+Only inserts still pay for the disk, and that difference is the file writes.
+A faster machine shows the same shape with smaller absolute numbers.
+
 Run it yourself rather than trusting a table: the absolute numbers depend
 entirely on the machine, and on a Raspberry Pi a single crossing into
 JavaScript costs three to four times what it does on a laptop. The shape
@@ -78,6 +91,10 @@ Each run warms up every variant on a small table first and throws those
 numbers away. Without that the variant that happens to run first carries the
 warm-up cost in every repetition, so taking the minimum does not remove it,
 and it looked like a real difference of about a third on the read.
+
+At the end it prints a three-line summary: the upstream driver, this build,
+and the same code with storage taken out, which is the floor. Everything
+above that is the detail behind those three lines.
 
 It prints min, median, mean, max and max/min per variant and operation, and
 writes every raw result to `results-<timestamp>.json`. Read the spread before
