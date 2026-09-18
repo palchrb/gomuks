@@ -57,9 +57,8 @@ interface dimensions {
 const MediaUploadDialog = ({ file, blobURL, doUploadFile, isEncrypted, isVoice }: MediaUploadDialogProps) => {
 	const videoRef = useRef<HTMLVideoElement>(null)
 	const [name, setName] = useState(file.name)
-	// Transcoding needs ffmpeg, which only the server build has. Images are
-	// pure Go, and a voice recording only needs repackaging, so both work in
-	// either build; the rest would be ignored, so they aren't offered.
+	// Transcoding needs ffmpeg, which only the server build has. Targets that
+	// need it are left out rather than offered and then ignored.
 	const canTranscode = !use(ClientContext)!.rpc.rpcMediaUpload
 	const needsVoiceReenc = isVoice && file.type !== voiceMimeType
 	const initialReencTarget = nonEncodableSources.includes(file.type)
@@ -107,7 +106,10 @@ const MediaUploadDialog = ({ file, blobURL, doUploadFile, isEncrypted, isVoice }
 		</video>
 		reencTargets = canTranscode ? videoReencTargets : null
 	} else if (file.type.startsWith("audio/")) {
-		reencTargets = isVoice || canTranscode ? (isVoice ? voiceReencTargets : audioReencTargets) : null
+		// A voice recording only needs repackaging, which both builds can do,
+		// and ogg/opus is the only target offered for it anyway. Converting
+		// some other audio file needs an encoder.
+		reencTargets = isVoice ? voiceReencTargets : canTranscode ? audioReencTargets : null
 		previewContent = <audio controls>
 			<source src={blobURL} type={file.type} />
 		</audio>
