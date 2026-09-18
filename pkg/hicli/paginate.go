@@ -567,10 +567,12 @@ func (h *HiClient) PaginateServer(ctx context.Context, roomID id.RoomID, limit i
 				},
 			},
 		})
-		zerolog.Ctx(ctx).Debug().
+		// Info rather than debug: this corrects a visibly wrong room list
+		// entry, so it should be easy to confirm in the console.
+		zerolog.Ctx(ctx).Info().
 			Int64("preview_event_rowid", int64(newPreview.RowID)).
 			Time("sorting_timestamp", newPreview.Timestamp.Time).
-			Msg("Set room preview from backfill")
+			Msg("Set room preview and sorting timestamp from backfill")
 	}
 	return &jsoncmd.PaginationResponse{
 		Events:     events,
