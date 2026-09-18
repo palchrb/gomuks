@@ -218,6 +218,16 @@ rebuilt from the database:
 await client.store.deleteCache(); location.reload()
 ```
 
+## Media
+
+Media is served by a service worker (`web/public/wasmuks-media-sw.js`) out of
+the Cache API, with the backend in the worker downloading on demand. The
+server build serves the same URLs over HTTP, so the frontend does not know the
+difference, with one thing that had to be reimplemented: byte ranges. The
+server build gets them from Go's `http.ServeContent`; here the service worker
+slices the cached body itself and answers 206. Without that, seeking in audio
+and video does not work, and Safari refuses to play them at all.
+
 ## Building without Docker
 
 The Docker build does all of this; doing it by hand needs one extra step the

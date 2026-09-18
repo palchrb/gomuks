@@ -93,6 +93,56 @@ function isExpired(response) {
 	return retryAfter > 0 && Date.now() >= retryAfter
 }
 
+// Media elements ask for byte ranges, and Safari refuses to play audio or
+// video at all if the response isn't range-capable. The server build gets
+// this from http.ServeContent; here the whole body is in the cache already,
+// so answer from it. Returns null when the header is one we don't handle, in
+// which case the caller falls back to the whole file.
+async function sliceRange(hit, rangeHeader) {
+	const parsed = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim())
+	if (!parsed) {
+		return null
+	}
+	const hasStart = parsed[1] !== ""
+	const hasEnd = parsed[2] !== ""
+	if (!hasStart && !hasEnd) {
+		return null
+	}
+	const body = await hit.arrayBuffer()
+	const total = body.byteLength
+	let start, end
+	if (!hasStart) {
+		// "bytes=-500" means the last 500 bytes.
+		start = Math.max(total - Number(parsed[2]), 0)
+		end = total - 1
+	} else {
+		start = Number(parsed[1])
+		end = hasEnd ? Math.min(Number(parsed[2]), total - 1) : total - 1
+	}
+	const headers = new Headers(hit.headers)
+	headers.set("Accept-Ranges", "bytes")
+	if (start > end || start >= total) {
+		headers.set("Content-Range", `bytes */${total}`)
+		return new Response(null, {status: 416, headers})
+	}
+	headers.set("Content-Range", `bytes ${start}-${end}/${total}`)
+	headers.set("Content-Length", String(end - start + 1))
+	return new Response(body.slice(start, end + 1), {
+		status: 206,
+		statusText: "Partial Content",
+		headers,
+	})
+}
+
+// withAcceptRanges re-announces that ranges are available. Headers on a
+// response that came out of the cache are immutable, so this builds a new one
+// around the same body rather than buffering it.
+function withAcceptRanges(hit) {
+	const headers = new Headers(hit.headers)
+	headers.set("Accept-Ranges", "bytes")
+	return new Response(hit.body, {status: hit.status, statusText: hit.statusText, headers})
+}
+
 async function serveFromCache(request) {
 	const cache = await caches.open(MEDIA_CACHE_NAME)
 	const cacheKey = mediaCacheKey(request.url)
@@ -125,5 +175,12 @@ async function serveFromCache(request) {
 	} else {
 		console.log("Cache hit for", request.url)
 	}
-	return hit
+	const rangeHeader = request.headers.get("Range")
+	if (rangeHeader) {
+		const ranged = await sliceRange(hit, rangeHeader)
+		if (ranged) {
+			return ranged
+		}
+	}
+	return withAcceptRanges(hit)
 }
