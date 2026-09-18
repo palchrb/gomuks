@@ -204,6 +204,30 @@ rebuilt from the database:
 await client.store.deleteCache(); location.reload()
 ```
 
+## Why startup costs what it does
+
+Opening the page runs the whole backend from nothing: the SQLite module and
+its storage layer load, the 30 MB Go program is fetched and compiled, schema
+migrations run, and then the account and crypto store load before the first
+sync. The file itself is cached by the browser, since its name contains a
+build hash and it is served as immutable.
+
+Whether the *compiled* code is reused is up to the engine, and the only way
+to get it is the implicit cache. Chrome writes compiled WebAssembly to disk
+and reuses it on later loads, but only for modules instantiated from a
+stream, only above 128 KB, and keyed by the resource URL. The frontend takes
+that path when the response says `application/wasm`, which `wasmukserve`
+sends and `cmd/wasmukserve/main_test.go` checks, because serving it as a
+generic binary would silently cost every visitor a full recompile. Every
+deployment changes the URL, so the first load after one always recompiles.
+
+Storing a compiled module in IndexedDB is not an option. It was an
+experimental Firefox feature, removed in Firefox 63, never shipped in Chrome
+or Safari, and the WebAssembly specification decided against it in favour of
+the implicit caches above. Safari has no documented compiled-code cache, so
+it most likely recompiles on every cold start; the only lever there is a
+smaller module.
+
 ## Later
 
 Not done, kept as options:
@@ -215,7 +239,12 @@ Not done, kept as options:
   content.
 * **Smaller binary**: `wasm-opt -Oz` and leaving syntax highlighting and
   markdown rendering out of the wasm build (roughly 20-25 % smaller, which
-  also shrinks V8's compiled code proportionally).
+  also shrinks V8's compiled code proportionally). This is the only lever on
+  startup time in browsers without a compiled-code cache, which is to say
+  Safari.
+* **Don't block on startup**: the room list is restored from IndexedDB before
+  the worker is even created, but the app still shows a full-screen spinner
+  until the backend reports ready. It could render what it has.
 * **Native gomuks per user** as a compose file, for people who use the
   server machine itself as a client.
 * **Upstream**: `pkg/sqlite-wasm-js/stmt.go` at the version this fork started
