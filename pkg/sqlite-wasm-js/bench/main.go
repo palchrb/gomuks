@@ -83,6 +83,8 @@ const selectQuery = `SELECT rowid, room_id, event_id, sender, type, state_key, t
 	megolm_session_id, decryption_error, send_error, reactions, last_edit_rowid, unread_type, sticky_duration
 FROM event WHERE room_id = $1 ORDER BY timestamp DESC LIMIT $2`
 
+const updateQuery = `UPDATE event SET unread_type = $1 WHERE event_id = $2`
+
 var selectOneQuery = strings.Replace(selectQuery, "WHERE room_id = $1 ORDER BY timestamp DESC LIMIT $2", "WHERE event_id = $1", 1)
 
 // Realistic-ish payloads: a 400-byte encrypted content blob, 300-byte decrypted body, 120-byte unsigned.
@@ -274,6 +276,25 @@ func benchDriver(driverName, tag, mode string, n int, reuse bool, extraPragmas s
 	}
 	res["point_lookup_ms"] = ms(time.Since(start))
 	res["point_lookups"] = lookups
+
+	// --- small updates, each in its own transaction ---
+	// This is what gomuks does constantly outside of syncs: mark something
+	// read, bump a room, store a receipt. It is also the workload that pays
+	// for the page size, because a rollback journal copies whole pages
+	// whatever the size of the change.
+	start = time.Now()
+	updates := min(n, 500)
+	for i := 0; i < updates; i++ {
+		updateRes, updateErr := db.Exec(updateQuery, i%4, eventID(i))
+		if updateErr != nil {
+			return nil, fmt.Errorf("update %d: %w", i, updateErr)
+		}
+		if affected, _ := updateRes.RowsAffected(); affected != 1 {
+			return nil, fmt.Errorf("update %d changed %d rows", i, affected)
+		}
+	}
+	res["update_ms"] = ms(time.Since(start))
+	res["updates"] = updates
 	return res, nil
 }
 

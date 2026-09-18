@@ -3,8 +3,10 @@
 Microbenchmark for the `sqlite-wasm-js` driver, run in headless Chromium against
 the real `@sqlite.org/sqlite-wasm` build with the OPFS SAHPool VFS. It uses a
 table shaped like gomuks' `event` table (22 columns, ~1 KB rows) and measures
-three operations: bulk insert inside one transaction, a timeline-style
-`SELECT ... LIMIT n`, and 500 point lookups by unique key.
+four operations: bulk insert inside one transaction, a timeline-style
+`SELECT ... LIMIT n`, 500 point lookups by unique key, and 500 single-row
+updates each in its own transaction, which is what marking things read and
+bumping rooms looks like.
 
 Variants, in the order they build on each other:
 
@@ -80,15 +82,21 @@ holds across the machines it has been run on:
 The remaining insert cost on storage is the actual file writes, around
 60 MB/s in this environment.
 
-### Page size, unfinished
+### Page size
 
-Larger pages cut the insert time substantially (roughly a third at 16 KiB and
-40 % at 32 KiB in one three-run set), with reads unchanged. That is tempting
-but not yet a reason to change the driver's default, because this benchmark
-inserts many rows sequentially in one transaction, which is the friendliest
-possible workload for large pages. A rollback journal rewrites whole pages, so
-gomuks' many small updates (room upserts, receipts, read markers) pay the page
-size on every change. Measure that pattern before touching the default.
+Larger pages cut the insert time substantially, roughly a sixth at 16 KiB and
+a third at 32 KiB, with reads unchanged. The worry was that a rollback journal
+copies whole pages whatever the size of the change, so gomuks' constant small
+updates would pay for the larger page. They don't: the update phase measures
+the same at 8, 16 and 32 KiB. So the case for a larger default is open, though
+it only applies to databases created afterwards unless something runs VACUUM.
+
+### The expensive thing is small writes
+
+A single-row update in its own transaction costs around 3 ms, against
+0.06 ms for a point lookup. Five hundred of them outweigh inserting two
+thousand rows and reading them back, several times over. Whatever is worth
+optimising next is in there, not in the page size.
 
 ## Repeating it
 
