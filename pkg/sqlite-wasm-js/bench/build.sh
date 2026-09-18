@@ -4,6 +4,10 @@
 # always exercises the same JS code as gomuks web.
 set -e
 cd "$(dirname "$0")"
+# Go's toolchain lives in the module cache, where everything is read-only, and
+# cp copies that mode along. Overwriting the copy on a later build then fails
+# for anyone who isn't root, so replace the files rather than writing into them.
+rm -f wasm_exec.js sqlite3.wasm
 cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" .
 # The bridge lives in web/, so a bare import in it resolves against web's
 # node_modules, which only exists if the frontend has been installed. Point it
@@ -13,4 +17,5 @@ node_modules/.bin/esbuild ../../../web/src/api/wasm/sqlite_bridge.ts \
 	--bundle --format=esm --platform=browser --outfile=sqlite_bridge.js --log-level=warning \
 	"--alias:@sqlite.org/sqlite-wasm=$(pwd)/node_modules/@sqlite.org/sqlite-wasm"
 cp node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm .
+chmod u+w wasm_exec.js sqlite3.wasm
 GOOS=js GOARCH=wasm CGO_ENABLED=0 go build -o bench.wasm .
