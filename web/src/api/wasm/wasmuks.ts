@@ -38,6 +38,8 @@ declare global {
 	}
 }
 
+const MEDIA_CACHE_NAME = "wasmuks-media-v1"
+
 // Cache key for a media URL: the path plus the thumbnail parameter, so the
 // thumbnail and the full image are separate entries but other parameters
 // (encryption flag, fallback avatar text) don't cause duplicates. Must match
@@ -51,13 +53,16 @@ export function mediaCacheKey(url: URL): string {
 
 async function setupMediaChannel() {
 	const bc = new BroadcastChannel("wasmuks-media-download")
-	const cache = await caches.open("wasmuks-media-v1")
 	bc.addEventListener("message", async evt => {
 		if (evt.data.type !== "request") {
 			return
 		}
 		const parsedURL = new URL(evt.data.url)
 		const cacheKey = mediaCacheKey(parsedURL)
+		// Opened per request: logout deletes the cache (see removeData in
+		// cmd/wasmuks), and a handle from before that would keep writing into
+		// the deleted one, which the service worker can never read.
+		const cache = await caches.open(MEDIA_CACHE_NAME)
 		try {
 			const result = await new Promise<MediaResponse>((resolve, reject) => {
 				self.meowDownloadMedia(parsedURL.pathname, parsedURL.search, { resolve, reject })

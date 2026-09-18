@@ -16,7 +16,9 @@
 self.addEventListener("install", () => self.skipWaiting())
 self.addEventListener("activate", (event) => event.waitUntil(clients.claim()))
 
-const mediaCache = caches.open("wasmuks-media-v1")
+// Opened per request rather than held: logout deletes the whole cache, and a
+// handle from before that keeps pointing at the deleted (now empty) cache.
+const MEDIA_CACHE_NAME = "wasmuks-media-v1"
 const bc = new BroadcastChannel("wasmuks-media-download")
 const mediaPromises = new Map()
 
@@ -82,12 +84,13 @@ function mediaCacheKey(url) {
 }
 
 async function serveFromCache(request) {
-	const cache = await mediaCache
+	const cache = await caches.open(MEDIA_CACHE_NAME)
 	const cacheKey = mediaCacheKey(request.url)
 	let hit = await cache.match(cacheKey)
 	if (!hit) {
 		await requestAndWaitForMedia(request.url)
-		hit = await cache.match(cacheKey)
+		// Re-open: the worker may have recreated the cache in the meantime.
+		hit = await (await caches.open(MEDIA_CACHE_NAME)).match(cacheKey)
 		if (!hit) {
 			console.log("Cache entry not found after request for", request.url)
 			return new Response("Cache entry not found", {status: 404})
