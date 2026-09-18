@@ -24,6 +24,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"image"
 	"io"
 	"mime"
 	"net/http"
@@ -34,6 +35,7 @@ import (
 	"syscall/js"
 	"time"
 
+	"github.com/buckket/go-blurhash"
 	"github.com/rs/zerolog"
 	"go.mau.fi/util/jsontime"
 	"go.mau.fi/util/ptr"
@@ -46,7 +48,23 @@ import (
 	"go.mau.fi/gomuks/pkg/hicli/jsoncmd"
 )
 
-func uploadMedia(ctx context.Context, params jsoncmd.UploadMediaParams, payload []byte) (*event.MessageEventContent, error) {
+// uploadExtras carries what the server build works out with ffmpeg and we let
+// the browser work out instead: the duration and dimensions of audio and
+// video, a frame to use as a thumbnail, and the waveform of a voice message.
+// See probeMedia in web/src/api/wasm/probe.ts.
+type uploadExtras struct {
+	DurationMS int   `json:"duration_ms,omitempty"`
+	Width      int   `json:"width,omitempty"`
+	Height     int   `json:"height,omitempty"`
+	Waveform   []int `json:"waveform,omitempty"`
+}
+
+func uploadMedia(
+	ctx context.Context,
+	params jsoncmd.UploadMediaParams,
+	extras uploadExtras,
+	payload, thumbnail []byte,
+) (*event.MessageEventContent, error) {
 	log := zerolog.Ctx(ctx)
 	// Same image handling as the server build, which is pure Go. The video
 	// and audio targets need ffmpeg and there is none here, so they are
@@ -68,6 +86,11 @@ func uploadMedia(ctx context.Context, params jsoncmd.UploadMediaParams, payload 
 		return nil, fmt.Errorf("failed to generate file info: %w", err)
 	}
 	info.Size = len(payload)
+	// GenerateFileInfo reads dimensions for images, but audio and video need
+	// a demuxer, which is ffmpeg in the server build and the browser here.
+	info.Duration = cmp.Or(info.Duration, extras.DurationMS)
+	info.Width = cmp.Or(info.Width, extras.Width)
+	info.Height = cmp.Or(info.Height, extras.Height)
 	fileName := cmp.Or(params.Filename, defaultFileName)
 	content := &event.MessageEventContent{
 		MsgType:  msgType,
@@ -78,11 +101,21 @@ func uploadMedia(ctx context.Context, params jsoncmd.UploadMediaParams, payload 
 	if params.ForceFile {
 		content.MsgType = event.MsgFile
 	} else if params.VoiceMessage {
-		// The server build also attaches a waveform, which it generates with
-		// ffmpeg. Without one the message is still marked as a voice message,
-		// so clients render it as one rather than as a plain audio file.
-		content.MSC1767Audio = &event.MSC1767Audio{Duration: info.Duration}
+		// The server build generates the waveform with ffmpeg; the browser
+		// decodes the audio and sends the peaks instead. Without them the
+		// message is still marked as a voice message.
+		content.MSC1767Audio = &event.MSC1767Audio{
+			Duration: info.Duration,
+			Waveform: extras.Waveform,
+		}
 		content.MSC3245Voice = &event.MSC3245Voice{}
+	}
+	if len(thumbnail) > 0 {
+		if err := attachThumbnail(ctx, info, thumbnail, params.Encrypt); err != nil {
+			// A missing thumbnail is not worth failing the upload over, which
+			// is also how the server build treats it.
+			log.Warn().Err(err).Msg("Failed to attach thumbnail")
+		}
 	}
 	checksum := sha256.Sum256(payload)
 	content.File, content.URL, err = gmx.UploadFileDirect(
@@ -96,6 +129,39 @@ func uploadMedia(ctx context.Context, params jsoncmd.UploadMediaParams, payload 
 		nil,
 	)
 	return content, err
+}
+
+// attachThumbnail uploads a thumbnail the browser produced and fills in the
+// same fields generateVideoThumbnail does in the server build, including the
+// blurhash, which is pure Go.
+func attachThumbnail(ctx context.Context, info *event.FileInfo, thumbnail []byte, encrypt bool) error {
+	thumbnailInfo := &event.FileInfo{
+		MimeType: "image/jpeg",
+		Size:     len(thumbnail),
+	}
+	if img, _, err := image.Decode(bytes.NewReader(thumbnail)); err != nil {
+		zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to decode thumbnail")
+	} else {
+		bounds := img.Bounds()
+		thumbnailInfo.Width = bounds.Dx()
+		thumbnailInfo.Height = bounds.Dy()
+		if hash, err := blurhash.Encode(4, 3, img); err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to generate thumbnail blurhash")
+		} else {
+			thumbnailInfo.AnoaBlurhash = hash
+		}
+	}
+	checksum := sha256.Sum256(thumbnail)
+	var err error
+	info.ThumbnailFile, info.ThumbnailURL, err = gmx.UploadFileDirect(
+		ctx, checksum[:], bytes.NewReader(thumbnail), encrypt,
+		int64(len(thumbnail)), "image/jpeg", "thumbnail.jpeg", nil,
+	)
+	if err != nil {
+		return err
+	}
+	info.ThumbnailInfo = thumbnailInfo
+	return nil
 }
 
 func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callbacks js.Value) {

@@ -233,12 +233,23 @@ or percentage, the quality setting, sending as a plain file, and marking a
 recording as a voice message. The image work is shared with the server build
 (`gomuks.ReencodeImage`), since it is pure Go.
 
-Three things in that dialog still cannot work in a browser, because they need
-ffmpeg: re-encoding to a video or audio format, which is refused with an
-explanation rather than ignored; the waveform on a voice message, which is
-left out while the message is still marked as a voice message; and thumbnails
-for videos. Uploads are also held in memory rather than streamed, so a very
-large file can exhaust the worker.
+The server build asks ffmpeg for the things it cannot read itself: how long an
+audio or video file is, how big the picture is, a frame to use as a thumbnail,
+and the waveform of a voice message. A browser already knows all of that, so
+the wasm build reads it there instead (`web/src/api/wasm/probe.ts`): duration
+and dimensions from a video element, a thumbnail by drawing a frame onto a
+canvas, and the waveform from the decoded audio samples. The results travel
+with the upload, and the backend attaches them exactly as the server build
+does, including the blurhash on the thumbnail. If the browser cannot decode a
+file, it is uploaded without the extra detail rather than failing.
+
+What still cannot work is re-encoding to a video or audio format, which needs
+a codec. That is now refused with an explanation instead of silently
+uploading the original. A WebAssembly build of ffmpeg would cover it, but it
+is around 30 MB on its own, which is the same size as the whole client, so it
+would only be worth loading at the moment someone asks for a conversion.
+Uploads are also held in memory rather than streamed, so a very large file can
+exhaust the worker.
 
 Media is served by a service worker (`web/public/wasmuks-media-sw.js`) out of
 the Cache API, with the backend in the worker downloading on demand. The

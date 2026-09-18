@@ -18,6 +18,7 @@ import RPCClient, { ConnectionEvent } from "./rpc.ts"
 import type {
 	BaseRPCCommand, MediaEncodingOptions, MediaMessageEventContent, RPCCommand,
 } from "./types"
+import { probeMedia } from "./wasm/probe.ts"
 import WasmuksWorker from "./wasm/wasmuks.ts?worker"
 
 export interface StorageStatus {
@@ -215,6 +216,10 @@ export default class WasmClient extends RPCClient {
 		file: Blob, filename: string, encrypt: boolean, encodingOpts?: MediaEncodingOptions,
 	): Promise<MediaMessageEventContent> {
 		const request_id = this.nextRequestID
+		// What the server build gets from ffmpeg, read from the browser
+		// instead: duration and dimensions, a thumbnail frame for video, and
+		// the waveform of a voice message.
+		const probe = await probeMedia(file, !!encodingOpts?.voice_message)
 		const payload = await file.bytes()
 		return new Promise((resolve, reject) => {
 			if (!this.#worker) {
@@ -234,9 +239,16 @@ export default class WasmClient extends RPCClient {
 					...Object.fromEntries(
 						Object.entries(encodingOpts ?? {}).filter(([key]) => !key.startsWith("_")),
 					),
+					duration_ms: probe.duration_ms,
+					width: probe.width,
+					height: probe.height,
+					waveform: probe.waveform,
 				}),
 				payload,
-			}, [payload.buffer])
+				thumbnail: probe.thumbnail,
+			}, probe.thumbnail
+				? [payload.buffer, probe.thumbnail.buffer]
+				: [payload.buffer])
 		})
 	}
 

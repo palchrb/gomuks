@@ -98,8 +98,11 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 	if wrappedCmd.Command == "wasm-upload" {
 		// The parameters are the same ones the server build takes as query
 		// parameters, so the upload dialog's options work the same way.
-		var params jsoncmd.UploadMediaParams
-		if err := json.Unmarshal(wrappedCmd.Data, &params); err != nil {
+		var uploadParams struct {
+			jsoncmd.UploadMediaParams
+			uploadExtras
+		}
+		if err := json.Unmarshal(wrappedCmd.Data, &uploadParams); err != nil {
 			postMessage(jsoncmd.RespError, wrappedCmd.RequestID, ptr.Ptr(gomuks.ToRespError(
 				fmt.Errorf("failed to parse upload parameters: %w", err),
 			)))
@@ -108,10 +111,17 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 		payloadVal := data.Get("payload")
 		payload := make([]byte, payloadVal.Length())
 		js.CopyBytesToGo(payload, payloadVal)
+		var thumbnail []byte
+		if thumbVal := data.Get("thumbnail"); thumbVal.Type() == js.TypeObject && thumbVal.Length() > 0 {
+			thumbnail = make([]byte, thumbVal.Length())
+			js.CopyBytesToGo(thumbnail, thumbVal)
+		}
 		go func() {
 			defer recoverCommandPanic("upload", wrappedCmd.RequestID)
 			ctx := gmx.Log.With().Str("action", "wasmuks upload").Logger().WithContext(context.Background())
-			resp, err := uploadMedia(ctx, params, payload)
+			resp, err := uploadMedia(
+				ctx, uploadParams.UploadMediaParams, uploadParams.uploadExtras, payload, thumbnail,
+			)
 			if err != nil {
 				postMessage(jsoncmd.RespError, wrappedCmd.RequestID, ptr.Ptr(gomuks.ToRespError(err)))
 			} else {
