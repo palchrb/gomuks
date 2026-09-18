@@ -260,7 +260,36 @@ Not done, kept as options:
   rather than stubbing a call. On its own it is 1.2 MB uncompressed, which is
   the ceiling on what that would save.
 
-  `wasm-opt -Oz` is the other half of this and has not been measured here.
+  `wasm-opt -Oz` from Binaryen is the other half, and it has now been
+  measured. It rewrites the finished module rather than the Go code: dead
+  code removed, instructions simplified, duplicates merged.
+
+  | | uncompressed | gzipped |
+  |---|---|---|
+  | as it ships | 30.4 MB | 7.0 MB |
+  | after `wasm-opt -Oz` | 27.3 MB | 6.8 MB |
+  | saving | 3.1 MB, 10 % | 0.2 MB, 3 % |
+
+  The optimised binary passes the startup smoke test, so it works. Compile
+  time should fall roughly with the uncompressed size, which is the number
+  that matters for a browser with no code cache; the download barely changes,
+  because gzip had already found most of what wasm-opt removes.
+
+  It is not enabled, for two reasons. It takes over six minutes on one core
+  for a module this size, which belongs in CI rather than in a local build.
+  And Go's wasm output is not a target Binaryen promises to support, so a
+  passing smoke test is reassurance rather than proof. Both savings combined,
+  dropping the highlighter and running the optimiser, would be about a quarter
+  of the module.
+
+  Reproduce with:
+
+  ```sh
+  npm install binaryen
+  ./node_modules/.bin/wasm-opt -Oz --enable-bulk-memory --enable-sign-ext \
+      --enable-nontrapping-float-to-int --enable-reference-types \
+      web/src/api/wasm/_gomuks.wasm -o optimised.wasm
+  ```
 * **Native gomuks per user** as a compose file, for people who use the
   server machine itself as a client.
 * **Upstream**: `pkg/sqlite-wasm-js/stmt.go` at the version this fork started
