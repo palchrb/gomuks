@@ -199,7 +199,14 @@ media cache: first an error response, then, once the backoff was added, the
 fallback letter avatar. Either way that one download could never succeed
 again.
 
-Both are fixed, and the behaviour now matches the server build. A failure is
+A third variant had the same look: a successful download never cleared the
+error record, so the attempt count only grew, the backoff climbed towards its
+week-long cap, and the fallback stayed cached long after the file had become
+available. That is why one user could show as a letter in the timeline while
+their real avatar loaded fine in the profile panel: those are two cache
+entries, and only the small one had failed once.
+
+All three are fixed, and the behaviour now matches the server build. A failure is
 remembered by the backend with a backoff starting at a few seconds and
 growing to a week, so a file the homeserver no longer has is not re-requested
 on every render. While the backoff lasts, the letter avatar is served and

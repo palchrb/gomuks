@@ -148,13 +148,13 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 			Int("attempts", cacheEntry.Error.Attempts).
 			Time("last_attempt", cacheEntry.Error.ReceivedAt.Time).
 			Msg("Not retrying media download yet")
-		retryAfter = float64(cacheEntry.Error.NextRetry().UnixMilli())
+		retryAfter = cappedRetryAfter(cacheEntry.Error.NextRetry())
 		return
 	}
 	resp, err := gmx.Client.Client.Download(mautrix.WithMaxRetries(ctx, 0), mxc)
 	if err != nil {
 		log.Err(err).Msg("Failed to download media")
-		retryAfter = float64(rememberMediaError(ctx, mxc, cacheEntry).UnixMilli())
+		retryAfter = cappedRetryAfter(rememberMediaError(ctx, mxc, cacheEntry))
 		return
 	}
 	defer func() {
@@ -163,34 +163,47 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Err(err).Msg("Failed to read media data")
+		retryAfter = cappedRetryAfter(rememberMediaError(ctx, mxc, cacheEntry))
 		return
 	}
 	if cacheEntry != nil && cacheEntry.EncFile != nil {
 		err = cacheEntry.EncFile.DecryptInPlace(data)
 		if err != nil {
+			// The server build records these too, so an undecryptable file
+			// isn't fetched again every time it scrolls into view.
 			log.Err(err).Msg("Failed to decrypt media data")
+			retryAfter = cappedRetryAfter(rememberMediaError(ctx, mxc, cacheEntry))
 			return
 		}
 	}
-	contentType := resp.Header.Get("Content-Type")
-	if cacheEntry != nil && cacheEntry.MimeType != "" {
-		contentType = cacheEntry.MimeType
+	// What the server build stores after a successful download, including
+	// clearing the error. Without that the attempt count only ever grows, so
+	// one old failure pushes the backoff towards its week-long cap and the
+	// fallback avatar sticks around long after the file became available.
+	if cacheEntry == nil {
+		cacheEntry = &database.Media{MXC: mxc}
 	}
+	if cacheEntry.FileName == "" {
+		_, respDisposition, _ := mime.ParseMediaType(resp.Header.Get("Content-Disposition"))
+		cacheEntry.FileName = respDisposition["filename"]
+	}
+	if cacheEntry.MimeType == "" {
+		cacheEntry.MimeType = resp.Header.Get("Content-Type")
+	}
+	cacheEntry.Size = int64(len(data))
+	cacheEntry.Hash = ptr.Ptr(sha256.Sum256(data))
+	cacheEntry.Error = nil
+	if err = gmx.Client.DB.Media.Put(ctx, cacheEntry); err != nil {
+		log.Err(err).Msg("Failed to save media cache entry")
+	}
+	contentType := cmp.Or(cacheEntry.MimeType, resp.Header.Get("Content-Type"))
 	// The disposition is decided here rather than taken from the homeserver,
 	// the same as the server build does in Media.ToHeaders: anything that
 	// isn't on the safe list is a download rather than something the browser
 	// renders in place.
-	dispositionEntry := &database.Media{MimeType: contentType}
-	if cacheEntry != nil {
-		dispositionEntry.FileName = cacheEntry.FileName
-	}
-	if dispositionEntry.FileName == "" {
-		_, respDisposition, _ := mime.ParseMediaType(resp.Header.Get("Content-Disposition"))
-		dispositionEntry.FileName = respDisposition["filename"]
-	}
 	contentDisposition := mime.FormatMediaType(
-		dispositionEntry.ContentDisposition(),
-		map[string]string{"filename": dispositionEntry.FileName},
+		cacheEntry.ContentDisposition(),
+		map[string]string{"filename": cacheEntry.FileName},
 	)
 	if useThumbnail && strings.HasPrefix(contentType, "image/") {
 		thumbnail, thumbnailType, err := gomuks.MakeAvatarThumbnail(data, cmp.Or(gmx.Config.Media.ThumbnailSize, 120))
@@ -222,6 +235,21 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 // an incremented attempt count, which is what database.MediaError's backoff is
 // calculated from. Mirrors addErrorToCacheEntry in pkg/gomuks/mediadownload.go,
 // minus the HTTP specifics that only the server build needs.
+// maxFallbackCache limits how long the browser may keep a fallback avatar.
+// The real backoff can reach a week, and the Cache API has no way to notice
+// that the situation changed, so a long-lived entry would outlive the reason
+// for it. The backend enforces the real schedule on each ask, which costs
+// nothing when it is still backing off.
+const maxFallbackCache = 5 * time.Minute
+
+func cappedRetryAfter(next time.Time) float64 {
+	limit := time.Now().Add(maxFallbackCache)
+	if next.After(limit) {
+		next = limit
+	}
+	return float64(next.UnixMilli())
+}
+
 func rememberMediaError(ctx context.Context, mxc id.ContentURI, cacheEntry *database.Media) time.Time {
 	log := zerolog.Ctx(ctx)
 	if cacheEntry == nil {
