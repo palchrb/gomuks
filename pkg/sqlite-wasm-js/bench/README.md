@@ -6,75 +6,56 @@ table shaped like gomuks' `event` table (22 columns, ~1 KB rows) and measures
 three operations: bulk insert inside one transaction, a timeline-style
 `SELECT ... LIMIT n`, and 500 point lookups by unique key.
 
-Variants:
+Variants, in the order they build on each other:
 
-* `current` – the driver through `database/sql`, one prepare per call (what hicli does).
-* `reuse` – same, with a prepared statement reused for all rows.
-* `current+exclusive+persist` – the driver with `PRAGMA locking_mode=EXCLUSIVE; journal_mode=PERSIST`.
-* `batched*` – a JS-side prototype where the whole parameter set / result set
-  crosses the Go↔JS boundary as one byte buffer (reference ceiling for the
-  driver's batched mode; see `bridge.js`).
+* `upstream` – the driver as it stood in gomuks v26.09, copied verbatim into
+  `upstream/`: one crossing into JavaScript per value, no statement cache,
+  normal locking and a rollback journal.
+* `upstream+exclusive+persist` – the same driver with `PRAGMA
+  locking_mode=EXCLUSIVE` and `journal_mode=PERSIST`.
+* `current` – this driver (batched bridge, statement cache) with the old
+  pragmas pinned, so the bridge is the only difference from `upstream`.
+* `reuse` – same, with one prepared statement reused for every row.
+* `current+exclusive+persist` – this driver with its defaults. What gomuks
+  ships.
 
-Each variant runs in `memory` (pure bridge cost) and `opfs-sahpool`. Results
-are the minimum of 3 repetitions, in milliseconds.
+Two comparisons fall out of that. `upstream` against `current` isolates the
+bridge; either driver against its own `+exclusive+persist` isolates the
+locking mode. Every variant also runs against an in-memory database, which is
+the floor once storage is out of the picture.
 
 ```sh
 cd pkg/sqlite-wasm-js/bench
 npm install
 npm run build
-node run.js 2000                                  # all variants, n=2000
-node run.js 10000 "current,current+exclusive+persist"   # subset
+node run.js 2000                                  # one run, all variants
+node run.js 10000 "upstream,current"              # a subset
 ```
 
 Chromium comes from Playwright (`npx playwright install chromium`); set
 `CHROMIUM_PATH` to use another Chromium binary instead.
 
-## Reference numbers
+## What the numbers say
 
-Headless Chromium 130-era build, OPFS SAHPool, n = 2000 rows, 500 point
-lookups, minimum of 3 repetitions, milliseconds. "Before" is the driver as of
-gomuks v26.09 (per-value bridge calls, WAL silently falling back to a rollback
-journal with normal locking); "after" is the batched bridge with statement
-cache and EXCLUSIVE locking + PERSIST journal.
+Run it yourself rather than trusting a table: the absolute numbers depend
+entirely on the machine, and on a Raspberry Pi a single crossing into
+JavaScript costs three to four times what it does on a laptop. The shape
+holds across the machines it has been run on:
 
-| Operation | before | after |
-|---|---|---|
-| insert 2000 rows in one transaction | 600 | 293 |
-| timeline select, 2000 rows | 155 | 45 |
-| 500 point lookups by unique key | 627 | 20 |
+* The **batched bridge** is what makes bulk work faster. Inserting and reading
+  many rows both improve substantially, because the old driver paid a crossing
+  per value and a row here has 22 columns.
+* **EXCLUSIVE locking** is what makes many small reads fast, by a large factor.
+  Under normal locking every read transaction takes and releases a file lock
+  and cannot trust its cached pages between statements, and on the SAH pool
+  each of those is a synchronous file operation. Holding the lock for the
+  session brings point lookups down to in-memory speed.
+* The **statement cache** barely shows up: `reuse`, which reuses one prepared
+  statement for every row, is within noise of `current`. It stays because it
+  removes a crossing per query, not because the benchmark rewards it.
 
-In `memory` mode (no I/O, pure bridge cost) the same operations went from
-600 / 205 / 245 ms to 93 / 60 / 31 ms. The remaining OPFS insert cost is the
-actual file writes (~60 MB/s).
-
-### Which change did what
-
-Both OPFS variants below use the batched bridge and the statement cache and
-differ only in locking mode and journal, so the difference is the pragmas
-alone. Same conditions as above; run-to-run variance on the point lookups is
-around 20 %, which is far smaller than the effect.
-
-| Operation | batched bridge, normal locking | + EXCLUSIVE and PERSIST |
-|---|---|---|
-| insert 2000 rows in one transaction | 322 | 312 |
-| timeline select, 2000 rows | 79 | 61 |
-| 500 point lookups by unique key | 420-510 | 21 |
-
-So the two changes do different jobs, and conflating them is easy:
-
-* The **batched bridge** is what makes bulk work faster: inserts roughly halve
-  and the timeline select drops by about two thirds.
-* **EXCLUSIVE locking** is what makes many small reads fast, by a factor of
-  twenty or more. Under normal locking each read transaction takes and
-  releases a file lock and cannot trust its page cache between statements, and
-  on the SAH pool each of those is a synchronous file operation. Holding the
-  lock for the session brings 500 lookups down to memory-mode speed (21 ms
-  against 22 ms with no file at all). This matters because hicli does a great
-  many small reads per sync and per room opened.
-* The **statement cache** barely shows up here: the `reuse` variant, which
-  reuses one prepared statement for every row, is within noise of `current`.
-  It was kept because it removes a bridge crossing per query, not because the
-  benchmark rewards it.
+The remaining insert cost on storage is the actual file writes, around
+60 MB/s in this environment.
 
 ## Repeating it
 
@@ -84,13 +65,13 @@ the spread. Everything is cold in each run: new browser, new database files.
 
 ```sh
 node runs.js 10                                       # 10 runs, 2000 rows, all variants
-node runs.js 20 2000 "current,current+exclusive+persist"
+node runs.js 20 2000 "upstream,current+exclusive+persist"   # a subset
 ```
 
 It prints min, median, mean, max and max/min per variant and operation, and
 writes every raw result to `results-<timestamp>.json`. Read the spread before
-believing a difference: anything inside it is noise. In practice the lookup
-and insert differences are far outside it, and the bulk read is not.
+believing a difference: anything inside it is noise. Ten runs is usually
+enough to separate the effects that matter from the ones that don't.
 
 Chromium comes from Playwright by default; set `CHROMIUM_PATH` to use another
 binary. If Playwright has no build for the architecture, which is the case on

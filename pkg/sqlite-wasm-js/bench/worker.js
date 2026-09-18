@@ -6,6 +6,18 @@ import initSqlite from "./sqlite_bridge.js"
 	self.benchN = parseInt(params.get("n") ?? "2000")
 	self.benchVariants = params.get("v") ?? ""
 	await initSqlite()
+	// The vendored upstream driver (see upstream/) reads 64-bit columns through
+	// a bridge helper the current bridge no longer needs. Add it back here so
+	// the production bridge stays as it is and both drivers can run in the
+	// same page.
+	const { capi } = self.sqlite3
+	self.sqlite3.meow.read_int64_column = (rowPtr, columnIndex) => {
+		const value = capi.sqlite3_column_int64(rowPtr, columnIndex)
+		if (typeof value === "bigint" && (value > Number.MAX_SAFE_INTEGER || value < Number.MIN_SAFE_INTEGER)) {
+			return value.toString()
+		}
+		return Number(value)
+	}
 	const go = new Go()
 	const t0 = performance.now()
 	const { instance } = await WebAssembly.instantiateStreaming(fetch("./bench.wasm"), go.importObject)

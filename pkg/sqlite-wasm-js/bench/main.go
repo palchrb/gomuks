@@ -3,9 +3,16 @@
 // Microbenchmark for pkg/sqlite-wasm-js, using a table shaped like gomuks'
 // `event` table (22 columns). Variants:
 //
-//	current                   - the driver via database/sql with the pre-EXCLUSIVE pragmas, one prepare per call
-//	reuse                     - same, but with a prepared statement reused for all rows
-//	current+exclusive+persist - the driver with its default pragmas (EXCLUSIVE locking, PERSIST journal)
+//	upstream                   - the driver as it stood in gomuks v26.09 (see upstream/):
+//	                             one crossing into JS per value, no statement cache
+//	upstream+exclusive+persist - the same driver with EXCLUSIVE locking and a PERSIST journal
+//	current                    - this driver (batched bridge, statement cache) with the old pragmas
+//	reuse                      - same, but with a prepared statement reused for all rows
+//	current+exclusive+persist  - this driver with its defaults: what gomuks ships
+//
+// upstream vs current isolates the bridge; the two +exclusive+persist variants
+// isolate the locking mode. Every variant also runs against an in-memory
+// database, which is the floor when storage is taken out of the picture.
 //
 // Results are posted to JS as a JSON object on globalThis.benchResult.
 package main
@@ -20,6 +27,12 @@ import (
 	"time"
 
 	_ "go.mau.fi/gomuks/pkg/sqlite-wasm-js"
+	_ "go.mau.fi/gomuks/pkg/sqlite-wasm-js/bench/upstream"
+)
+
+const (
+	currentDriver  = "sqlite-wasm-js"
+	upstreamDriver = "sqlite-wasm-js-upstream"
 )
 
 func clog(args ...any) { js.Global().Get("console").Call("log", args...) }
@@ -129,15 +142,18 @@ func ms(d time.Duration) float64 { return math.Round(float64(d.Microseconds())/1
 // Variant 1+2: the real driver through database/sql
 // ---------------------------------------------------------------------------
 
-func benchDriver(mode string, n int, reuse bool, extraPragmas string) (result, error) {
+func benchDriver(driverName, tag, mode string, n int, reuse bool, extraPragmas string) (result, error) {
 	res := result{}
-	// The driver defaults to EXCLUSIVE+PERSIST on OPFS; "current" pins the
-	// pre-change modes so the baseline stays comparable over time.
-	uri := fmt.Sprintf("file:/bench-%s-%v-%d.db?_txlock=immediate&connection_mode=%s", mode, reuse, len(extraPragmas), mode)
-	if extraPragmas == "" {
+	// Each variant gets its own file so nothing is shared between them.
+	uri := fmt.Sprintf("file:/bench-%s-%s.db?_txlock=immediate&connection_mode=%s", mode, tag, mode)
+	if driverName == currentDriver && extraPragmas == "" {
+		// This driver defaults to EXCLUSIVE+PERSIST on OPFS; pin the old modes
+		// so the baseline stays comparable over time. The upstream driver does
+		// not read these parameters and already defaults to them, and the
+		// variants that want the new modes set them as pragmas below.
 		uri += "&_locking_mode=NORMAL&_journal_mode=DELETE"
 	}
-	db, err := sql.Open("sqlite-wasm-js", uri)
+	db, err := sql.Open(driverName, uri)
 	if err != nil {
 		return nil, err
 	}
@@ -277,24 +293,41 @@ func main() {
 	all := result{"n": n, "reps": reps, "crossing": benchCrossing()}
 	for rep := 0; rep < reps; rep++ {
 		for _, mode := range []string{"memory", "opfs-sahpool"} {
-			variants := []string{"current", "reuse", "current+exclusive+persist"}
+			variants := []string{
+				"upstream", "upstream+exclusive+persist",
+				"current", "reuse", "current+exclusive+persist",
+			}
 			if v := js.Global().Get("benchVariants"); v.Type() == js.TypeString && v.String() != "" {
 				variants = strings.Split(v.String(), ",")
 			}
 			for _, variant := range variants {
 				var r result
 				var err error
+				// Locking mode is meaningless without a file, so the
+				// exclusive variants only run against storage.
 				switch variant {
+				case "upstream":
+					r, err = benchDriver(upstreamDriver, "up", mode, n, false, "")
+				case "upstream+exclusive+persist":
+					if mode == "memory" {
+						continue
+					}
+					// The upstream driver ignores the URI parameters for these,
+					// so set them the only way it understands.
+					r, err = benchDriver(upstreamDriver, "upx", mode, n, false,
+						"PRAGMA locking_mode = EXCLUSIVE;PRAGMA journal_mode = PERSIST")
 				case "current":
-					r, err = benchDriver(mode, n, false, "")
+					r, err = benchDriver(currentDriver, "cur", mode, n, false, "")
 				case "reuse":
-					r, err = benchDriver(mode, n, true, "")
+					r, err = benchDriver(currentDriver, "reuse", mode, n, true, "")
 				case "current+exclusive+persist":
 					if mode == "memory" {
 						continue
 					}
 					// Driver defaults (EXCLUSIVE locking, PERSIST journal).
-					r, err = benchDriver(mode, n, false, "PRAGMA foreign_keys = ON")
+					r, err = benchDriver(currentDriver, "curx", mode, n, false, "PRAGMA foreign_keys = ON")
+				default:
+					err = fmt.Errorf("unknown variant %q", variant)
 				}
 				key := mode + "/" + variant
 				if err != nil {
