@@ -237,11 +237,23 @@ Not done, kept as options:
   `format: event_id_only` and the Web Push subscription in the pusher data, so
   the server forwards "new message in room X" without ever holding keys or
   content.
-* **Smaller binary**: `wasm-opt -Oz` and leaving syntax highlighting and
-  markdown rendering out of the wasm build (roughly 20-25 % smaller, which
-  also shrinks V8's compiled code proportionally). This is the only lever on
-  startup time in browsers without a compiled-code cache, which is to say
-  Safari.
+* **Smaller binary.** The only lever on startup time in a browser without a
+  compiled-code cache, which is to say Safari. Measured by building each
+  library on its own for `js/wasm` and subtracting an empty program, and for
+  the highlighter also subtracting `regexp` and `encoding/xml`, which it
+  brings in but nothing else in the wasm build needs:
+
+  | | uncompressed | gzipped |
+  |---|---|---|
+  | current module | 30.4 MB | 7.1 MB |
+  | syntax highlighting (chroma, 353 embedded lexers) | 7.4 MB | 1.7 MB |
+  | markdown on send (goldmark with GFM) | 1.2 MB | 0.3 MB |
+
+  So both together are a little over a quarter of the module. Neither is
+  optional in the sense of a build flag: the highlighter runs when incoming
+  HTML is sanitized, and the markdown parser when a message is sent, so
+  dropping them means doing both in the frontend instead. `wasm-opt -Oz` is
+  separate and untested here.
 * **Don't block on startup**: the room list is restored from IndexedDB before
   the worker is even created, but the app still shows a full-screen spinner
   until the backend reports ready. It could render what it has.
