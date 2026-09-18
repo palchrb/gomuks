@@ -193,6 +193,12 @@ rather than failing with "error loading dynamically imported module".
 Both checks work behind any static server, as long as `index.html` is served
 without long-lived caching.
 
+**An avatar or an image stays broken while others load.** A failed download
+used to be stored in the media cache as an error and served from then on, so
+one slow or interrupted fetch broke that image permanently. Failures are no
+longer cached, and an entry left over from before is discarded on the next
+attempt, so this heals itself once the new build is loaded.
+
 **A room sits in the wrong place in the room list on one device only.** The
 room list is restored from an IndexedDB cache on every load, and the backend
 then sends only rooms changed since the cached timestamp. An older build

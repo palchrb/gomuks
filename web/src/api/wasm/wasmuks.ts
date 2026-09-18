@@ -76,8 +76,13 @@ async function setupMediaChannel() {
 			await cache.put(cacheKey, new Response(result.buffer, { status: 200, headers }))
 			bc.postMessage({ type: "response", url: evt.data.url })
 		} catch (err) {
+			// Deliberately not cached. A failure used to be stored as a 500,
+			// which the service worker then served forever: one slow or
+			// interrupted download and that image was broken until the cache
+			// was cleared. The service worker returns its own error when it
+			// finds nothing, and retries the next time the image is needed.
 			console.error("Error handling media download request:", err)
-			await cache.put(cacheKey, new Response("Failed to download", { status: 500 }))
+			await cache.delete(cacheKey)
 			bc.postMessage({ type: "response", url: evt.data.url, failed: true })
 		}
 	})

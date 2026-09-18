@@ -87,10 +87,20 @@ async function serveFromCache(request) {
 	const cache = await caches.open(MEDIA_CACHE_NAME)
 	const cacheKey = mediaCacheKey(request.url)
 	let hit = await cache.match(cacheKey)
+	if (hit && !hit.ok) {
+		// An older version stored failed downloads as an error response, which
+		// made one bad download permanent. Drop those and try again.
+		console.log("Discarding cached error for", request.url)
+		await cache.delete(cacheKey)
+		hit = undefined
+	}
 	if (!hit) {
 		await requestAndWaitForMedia(request.url)
 		// Re-open: the worker may have recreated the cache in the meantime.
 		hit = await (await caches.open(MEDIA_CACHE_NAME)).match(cacheKey)
+		if (hit && !hit.ok) {
+			hit = undefined
+		}
 		if (!hit) {
 			console.log("Cache entry not found after request for", request.url)
 			return new Response("Cache entry not found", {status: 404})
