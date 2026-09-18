@@ -25,6 +25,20 @@ interface VoiceRecorderProps {
 	onFinish: (file: File, isVoice?: true) => void
 }
 
+// The server build converts the recording to ogg/opus, so the name matched
+// that. Without ffmpeg the recording is sent as it was made, and the name has
+// to match the bytes or clients guess the format wrong.
+function extensionFor(mime: string): string {
+	if (mime.startsWith("audio/ogg") || mime.startsWith("video/ogg")) {
+		return ".ogg"
+	} else if (mime.startsWith("audio/webm") || mime.startsWith("video/webm")) {
+		return ".webm"
+	} else if (mime.startsWith("audio/mp4")) {
+		return ".m4a"
+	}
+	return ""
+}
+
 function chooseMime() {
 	for (const mime of ["audio/ogg; codecs=opus", "audio/webm; codecs=opus", "audio/mp4"]) {
 		if (MediaRecorder.isTypeSupported(mime)) {
@@ -93,7 +107,9 @@ const VoiceRecorder = ({ onFinish }: VoiceRecorderProps) => {
 		if (!recorder.current) {
 			return
 		}
-		const file = new File(blobs.current, "Voice message.ogg", { type: recorder.current.mimeType })
+		const file = new File(blobs.current, `Voice message${extensionFor(recorder.current.mimeType)}`, {
+			type: recorder.current.mimeType,
+		})
 		onFinish(file, true)
 	}
 	const finishRecord = () => recorder.current?.stop()

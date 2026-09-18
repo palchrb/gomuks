@@ -121,7 +121,8 @@ async function probeAudio(file: Blob, wantWaveform: boolean): Promise<MediaProbe
 		)
 		const samples = decoded.getChannelData(0)
 		const perBucket = Math.max(Math.floor(samples.length / buckets), 1)
-		const waveform: number[] = []
+		const peaks: number[] = []
+		let loudest = 0
 		for (let i = 0; i < buckets; i++) {
 			let peak = 0
 			const start = i * perBucket
@@ -131,9 +132,17 @@ async function probeAudio(file: Blob, wantWaveform: boolean): Promise<MediaProbe
 					peak = value
 				}
 			}
-			waveform.push(Math.min(Math.round(peak * WAVEFORM_MAX), WAVEFORM_MAX))
+			peaks.push(peak)
+			if (peak > loudest) {
+				loudest = peak
+			}
 		}
-		probe.waveform = waveform
+		// Scaled against the loudest part rather than against full scale.
+		// Speech into a laptop microphone peaks far below it, which would
+		// otherwise draw a flat line of zeroes and ones.
+		probe.waveform = peaks.map(peak => loudest > 0
+			? Math.min(Math.round((peak / loudest) * WAVEFORM_MAX), WAVEFORM_MAX)
+			: 0)
 		return probe
 	} finally {
 		await audioCtx.close()

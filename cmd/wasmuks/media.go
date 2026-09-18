@@ -101,6 +101,14 @@ func uploadMedia(
 	if params.ForceFile {
 		content.MsgType = event.MsgFile
 	} else if params.VoiceMessage {
+		// webm is a video container even when it holds nothing but audio, so
+		// sniffing a browser recording gives video/webm and, without the
+		// conversion to ogg the server build does, the message would go out
+		// as a video. A voice message is audio by definition.
+		content.MsgType = event.MsgAudio
+		if strings.HasPrefix(info.MimeType, "video/") {
+			info.MimeType = "audio/" + strings.TrimPrefix(info.MimeType, "video/")
+		}
 		// The server build generates the waveform with ffmpeg; the browser
 		// decodes the audio and sends the peaks instead. Without them the
 		// message is still marked as a voice message.
