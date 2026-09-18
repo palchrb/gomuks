@@ -76,6 +76,42 @@ So the two changes do different jobs, and conflating them is easy:
   It was kept because it removes a bridge crossing per query, not because the
   benchmark rewards it.
 
+## Repeating it
+
+One run on a machine that is doing other things is not worth much, so
+`runs.js` repeats the whole benchmark in a fresh browser process and prints
+the spread. Everything is cold in each run: new browser, new database files.
+
+```sh
+node runs.js 10                                       # 10 runs, 2000 rows, all variants
+node runs.js 20 2000 "current,current+exclusive+persist"
+```
+
+It prints min, median, mean, max and max/min per variant and operation, and
+writes every raw result to `results-<timestamp>.json`. Read the spread before
+believing a difference: anything inside it is noise. In practice the lookup
+and insert differences are far outside it, and the bulk read is not.
+
+Chromium comes from Playwright by default; set `CHROMIUM_PATH` to use another
+binary. If Playwright has no build for the architecture, which is the case on
+a Raspberry Pi, the system browser (`/usr/bin/chromium` and friends) is used
+automatically. Building `bench.wasm` needs the same Go version as the project.
+
+## Measuring the device you actually use
+
+The benchmark measures the browser doing the database work, so the machine
+that counts is the one running the browser, not the one serving the files. In
+a wasmuks deployment the server only hands out static files; the database work
+happens on the laptop or phone. To measure one of those, build here once and
+serve the directory to the network:
+
+```sh
+BENCH_HOST=0.0.0.0 node serve.js
+```
+
+Then open `http://<that machine>:29399/?n=2000` on the device. The page runs
+the same benchmark and prints the same JSON.
+
 ## Startup smoke test
 
 `smoke.mjs` serves a built `web/dist` in headless Chromium and checks that the

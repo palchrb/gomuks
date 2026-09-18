@@ -7,7 +7,7 @@
 import http from "node:http"
 import fs from "node:fs"
 import path from "node:path"
-import { chromium } from "playwright"
+import { launchChromium } from "./browser.js"
 
 const urlArg = process.argv.indexOf("--url")
 const externalURL = urlArg >= 0 ? process.argv[urlArg + 1] : null
@@ -49,7 +49,7 @@ if (!baseURL) {
 	baseURL = `http://127.0.0.1:${server.address().port}`
 }
 
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, headless: true })
+const browser = await launchChromium()
 const context = await browser.newContext()
 const failures = []
 const check = (cond, msg) => {

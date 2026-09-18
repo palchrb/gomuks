@@ -5,6 +5,7 @@
 	"scripts": {
 		"build": "sh ./build.sh",
 		"bench": "node run.js",
+		"runs": "node runs.js",
 		"smoke": "node smoke.mjs"
 	},
 	"devDependencies": {

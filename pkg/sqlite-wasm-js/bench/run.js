@@ -1,13 +1,10 @@
 // Playwright runner for the sqlite-wasm-js benchmark. Usage: node run.js [n] [variant,variant,...]
-import { chromium } from "playwright"
+import { launchChromium } from "./browser.js"
 import { serve } from "./serve.js"
 
 const n = process.argv[2] ?? "2000"
 const { server, port } = await serve(0)
-const browser = await chromium.launch({
-	executablePath: process.env.CHROMIUM_PATH || undefined,
-	headless: true,
-})
+const browser = await launchChromium()
 const page = await browser.newPage()
 page.on("console", msg => process.stderr.write(`[browser] ${msg.text()}\n`))
 page.on("pageerror", err => process.stderr.write(`[pageerror] ${err}\n`))
