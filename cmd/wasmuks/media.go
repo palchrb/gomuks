@@ -29,6 +29,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -46,6 +47,7 @@ import (
 	"go.mau.fi/gomuks/pkg/gomuks"
 	"go.mau.fi/gomuks/pkg/hicli/database"
 	"go.mau.fi/gomuks/pkg/hicli/jsoncmd"
+	"go.mau.fi/gomuks/pkg/oggopus"
 )
 
 // uploadExtras carries what the server build works out with ffmpeg and we let
@@ -66,6 +68,7 @@ func uploadMedia(
 	payload, thumbnail []byte,
 ) (*event.MessageEventContent, error) {
 	log := zerolog.Ctx(ctx)
+	remuxedToOgg := false
 	// Same image handling as the server build, which is pure Go. The video
 	// and audio targets need ffmpeg and there is none here, so they are
 	// reported rather than silently ignored.
@@ -80,6 +83,23 @@ func uploadMedia(
 		payload = encoded
 	} else if params.EncodeTo != "" {
 		return nil, fmt.Errorf("re-encoding to %s needs ffmpeg, which the browser build doesn't have", params.EncodeTo)
+	}
+	// A browser records a voice message as Opus in a WebM container, while the
+	// voice message spec and clients such as Element X expect Ogg. The server
+	// build converts with ffmpeg; the audio is already Opus either way, so
+	// only the container has to change and no codec is needed.
+	if params.VoiceMessage {
+		if ogg, remuxErr := oggopus.Remux(payload); remuxErr != nil {
+			log.Debug().Err(remuxErr).Msg("Not repackaging voice message as ogg, sending as recorded")
+		} else {
+			log.Debug().
+				Int("before", len(payload)).
+				Int("after", len(ogg)).
+				Msg("Repackaged voice message from webm to ogg")
+			payload = ogg
+			params.Filename = strings.TrimSuffix(params.Filename, path.Ext(params.Filename)) + ".ogg"
+			remuxedToOgg = true
+		}
 	}
 	msgType, info, defaultFileName, err := gmx.GenerateFileInfo(ctx, bytes.NewReader(payload))
 	if err != nil {
@@ -106,7 +126,12 @@ func uploadMedia(
 		// conversion to ogg the server build does, the message would go out
 		// as a video. A voice message is audio by definition.
 		content.MsgType = event.MsgAudio
-		if strings.HasPrefix(info.MimeType, "video/") {
+		if remuxedToOgg {
+			// Stated plainly rather than left to content sniffing, which
+			// reports Opus in Ogg as audio/opus.
+			info.MimeType = "audio/ogg"
+		} else if strings.HasPrefix(info.MimeType, "video/") {
+			// webm is a video container even holding nothing but audio.
 			info.MimeType = "audio/" + strings.TrimPrefix(info.MimeType, "video/")
 		}
 		// The server build generates the waveform with ffmpeg; the browser

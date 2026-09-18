@@ -243,12 +243,15 @@ with the upload, and the backend attaches them exactly as the server build
 does, including the blurhash on the thumbnail. If the browser cannot decode a
 file, it is uploaded without the extra detail rather than failing.
 
-What still cannot work is re-encoding to a video or audio format, which needs
-a codec. The upload dialog no longer offers those targets in this build, and
-a voice recording is sent in whatever format the browser recorded it in
-rather than converted to ogg/opus, which is what the server build does with
-ffmpeg. Every browser records something other clients can play, so the only
-loss is uniformity. A WebAssembly build of ffmpeg would cover it, but it
+Voice messages do come out as ogg/opus, the format the spec asks for, without
+ffmpeg. Browsers record Opus in a WebM container, and the audio is already
+what it needs to be, so `pkg/oggopus` moves the packets into an Ogg container
+instead of converting them. No codec is involved and nothing is re-encoded.
+It matters in practice: Element X will not play a WebM voice message.
+
+What still cannot work is re-encoding video, or audio that was not recorded
+as Opus, since that needs a codec. The upload dialog no longer offers those
+targets in this build, and anything it cannot repackage is sent as recorded. A WebAssembly build of ffmpeg would cover it, but it
 is around 30 MB on its own, which is the same size as the whole client, so it
 would only be worth loading at the moment someone asks for a conversion.
 Uploads are also held in memory rather than streamed, so a very large file can
