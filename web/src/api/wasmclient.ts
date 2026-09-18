@@ -235,7 +235,7 @@ export default class WasmClient extends RPCClient {
 			this.connect.emit({
 				connected: true,
 				reconnecting: true,
-				error: "Connection to the homeserver was interrupted",
+				error: "Sync was interrupted",
 			})
 		} else if (!resumeGrace && this.#showingReconnect) {
 			this.#showingReconnect = false
