@@ -15,7 +15,9 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import { CachedEventDispatcher, NonNullCachedEventDispatcher } from "@/util/eventdispatcher.ts"
 import RPCClient, { ConnectionEvent } from "./rpc.ts"
-import type { BaseRPCCommand, MediaMessageEventContent, RPCCommand } from "./types"
+import type {
+	BaseRPCCommand, MediaEncodingOptions, MediaMessageEventContent, RPCCommand,
+} from "./types"
 import WasmuksWorker from "./wasm/wasmuks.ts?worker"
 
 export interface StorageStatus {
@@ -209,7 +211,9 @@ export default class WasmClient extends RPCClient {
 
 	async doAuth(): Promise<void> {}
 
-	async uploadMedia(file: Blob, filename: string, encrypt: boolean): Promise<MediaMessageEventContent> {
+	async uploadMedia(
+		file: Blob, filename: string, encrypt: boolean, encodingOpts?: MediaEncodingOptions,
+	): Promise<MediaMessageEventContent> {
 		const request_id = this.nextRequestID
 		const payload = await file.bytes()
 		return new Promise((resolve, reject) => {
@@ -221,9 +225,16 @@ export default class WasmClient extends RPCClient {
 			this.#worker.postMessage({
 				command: "wasm-upload",
 				request_id,
-				data: "",
-				encrypt,
-				filename,
+				// The same parameters the server build takes in the query
+				// string, so the upload dialog's options apply here too.
+				// Keys starting with _ are for the frontend, as in the HTTP path.
+				data: JSON.stringify({
+					filename,
+					encrypt,
+					...Object.fromEntries(
+						Object.entries(encodingOpts ?? {}).filter(([key]) => !key.startsWith("_")),
+					),
+				}),
 				payload,
 			}, [payload.buffer])
 		})

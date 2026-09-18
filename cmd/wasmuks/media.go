@@ -43,29 +43,53 @@ import (
 
 	"go.mau.fi/gomuks/pkg/gomuks"
 	"go.mau.fi/gomuks/pkg/hicli/database"
+	"go.mau.fi/gomuks/pkg/hicli/jsoncmd"
 )
 
-func uploadMedia(ctx context.Context, fileName string, encrypt bool, payload []byte) (*event.MessageEventContent, error) {
+func uploadMedia(ctx context.Context, params jsoncmd.UploadMediaParams, payload []byte) (*event.MessageEventContent, error) {
+	log := zerolog.Ctx(ctx)
+	// Same image handling as the server build, which is pure Go. The video
+	// and audio targets need ffmpeg and there is none here, so they are
+	// reported rather than silently ignored.
+	if encoded, err := gomuks.ReencodeImage(bytes.NewReader(payload), params); err != nil {
+		return nil, fmt.Errorf("failed to reencode media: %w", err)
+	} else if encoded != nil {
+		log.Debug().
+			Str("encode_to", params.EncodeTo).
+			Int("before", len(payload)).
+			Int("after", len(encoded)).
+			Msg("Re-encoded upload")
+		payload = encoded
+	} else if params.EncodeTo != "" {
+		return nil, fmt.Errorf("re-encoding to %s needs ffmpeg, which the browser build doesn't have", params.EncodeTo)
+	}
 	msgType, info, defaultFileName, err := gmx.GenerateFileInfo(ctx, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate file info: %w", err)
 	}
 	info.Size = len(payload)
-	if fileName == "" {
-		fileName = defaultFileName
-	}
+	fileName := cmp.Or(params.Filename, defaultFileName)
 	content := &event.MessageEventContent{
 		MsgType:  msgType,
 		Body:     fileName,
 		Info:     info,
 		FileName: fileName,
 	}
+	if params.ForceFile {
+		content.MsgType = event.MsgFile
+	} else if params.VoiceMessage {
+		// The server build also attaches a waveform, which it generates with
+		// ffmpeg. Without one the message is still marked as a voice message,
+		// so clients render it as one rather than as a plain audio file.
+		content.MSC1767Audio = &event.MSC1767Audio{Duration: info.Duration}
+		content.MSC3245Voice = &event.MSC3245Voice{}
+	}
 	checksum := sha256.Sum256(payload)
 	content.File, content.URL, err = gmx.UploadFileDirect(
 		ctx,
 		checksum[:],
 		bytes.NewReader(payload),
-		encrypt,
+		params.Encrypt,
 		int64(info.Size),
 		info.MimeType,
 		fileName,

@@ -31,6 +31,7 @@ import {
 	LoginFlowsResponse,
 	LoginRequest,
 	ManualPaginationResponse,
+	MediaEncodingOptions,
 	MediaMessageEventContent,
 	MembershipAction,
 	Mentions,
@@ -152,8 +153,10 @@ export default abstract class RPCClient {
 		return this.#requestIDCounter++
 	}
 
-	// eslint-disable-next-line @typescript-eslint/no-unused-vars
-	async uploadMedia(_file: Blob, _filename: string, _encrypt: boolean): Promise<MediaMessageEventContent> {
+	async uploadMedia(
+		// eslint-disable-next-line @typescript-eslint/no-unused-vars
+		_file: Blob, _filename: string, _encrypt: boolean, _encodingOpts?: MediaEncodingOptions,
+	): Promise<MediaMessageEventContent> {
 		throw new Error("Media upload not supported by this RPC client")
 	}
 

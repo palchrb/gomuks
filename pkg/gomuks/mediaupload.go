@@ -475,6 +475,49 @@ func (gmx *Gomuks) GenerateFileInfo(ctx context.Context, file io.ReadSeeker) (ev
 
 const maxUploadDecodeMemory = 512 * 1024 * 1024
 
+// ReencodeImage applies the image part of the upload encoding options and
+// returns the re-encoded bytes. Split out of reencodeMedia so frontends
+// without a filesystem can use it: the wasm build has the upload in memory
+// and no temp file to work in. Returns nil if EncodeTo isn't an image type.
+func ReencodeImage(src readSeekerAt, params jsoncmd.UploadMediaParams) ([]byte, error) {
+	switch params.EncodeTo {
+	case "image/webp", "image/jpeg", "image/png", "image/gif":
+	default:
+		return nil, nil
+	}
+	if params.Quality == 0 {
+		params.Quality = 80
+	}
+	decoded, err := decodeImageWithOrientationFix(src, maxUploadDecodeMemory)
+	if err != nil {
+		return nil, err
+	}
+	if params.ResizeWidth > 0 && params.ResizeHeight > 0 {
+		decoded = imaging.Resize(decoded, params.ResizeWidth, params.ResizeHeight, imaging.Lanczos)
+	} else if params.ResizePercent != 0 {
+		params.ResizeWidth = int(float64(decoded.Bounds().Dx()) * float64(params.ResizePercent) / 100)
+		params.ResizeHeight = int(float64(decoded.Bounds().Dy()) * float64(params.ResizePercent) / 100)
+		decoded = imaging.Resize(decoded, params.ResizeWidth, params.ResizeHeight, imaging.Lanczos)
+	}
+	var out bytes.Buffer
+	switch params.EncodeTo {
+	case "image/webp":
+		err = encodeWebp(&out, decoded, float32(params.Quality), params.Quality >= 100)
+	case "image/jpeg":
+		err = jpeg.Encode(&out, decoded, &jpeg.Options{Quality: params.Quality})
+	case "image/png":
+		err = png.Encode(&out, decoded)
+	case "image/gif":
+		err = gif.Encode(&out, decoded, nil)
+	default:
+		panic("unreachable")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode image: %w", err)
+	}
+	return out.Bytes(), nil
+}
+
 func (gmx *Gomuks) reencodeMedia(ctx context.Context, params jsoncmd.UploadMediaParams, tempFile *os.File) ([]byte, error) {
 	defer func() {
 		_ = tempFile.Close()
@@ -488,19 +531,9 @@ func (gmx *Gomuks) reencodeMedia(ctx context.Context, params jsoncmd.UploadMedia
 		if err != nil {
 			return nil, fmt.Errorf("failed to seek to start of temp file: %w", err)
 		}
-		if params.Quality == 0 {
-			params.Quality = 80
-		}
-		decoded, err := decodeImageWithOrientationFix(tempFile, maxUploadDecodeMemory)
+		encoded, err := ReencodeImage(tempFile, params)
 		if err != nil {
 			return nil, err
-		}
-		if params.ResizeWidth > 0 && params.ResizeHeight > 0 {
-			decoded = imaging.Resize(decoded, params.ResizeWidth, params.ResizeHeight, imaging.Lanczos)
-		} else if params.ResizePercent != 0 {
-			params.ResizeWidth = int(float64(decoded.Bounds().Dx()) * float64(params.ResizePercent) / 100)
-			params.ResizeHeight = int(float64(decoded.Bounds().Dy()) * float64(params.ResizePercent) / 100)
-			decoded = imaging.Resize(decoded, params.ResizeWidth, params.ResizeHeight, imaging.Lanczos)
 		}
 		_, err = tempFile.Seek(0, io.SeekStart)
 		if err != nil {
@@ -510,20 +543,8 @@ func (gmx *Gomuks) reencodeMedia(ctx context.Context, params jsoncmd.UploadMedia
 		if err != nil {
 			return nil, fmt.Errorf("failed to truncate temp file: %w", err)
 		}
-		switch params.EncodeTo {
-		case "image/webp":
-			err = encodeWebp(tempFile, decoded, float32(params.Quality), params.Quality >= 100)
-		case "image/jpeg":
-			err = jpeg.Encode(tempFile, decoded, &jpeg.Options{Quality: params.Quality})
-		case "image/png":
-			err = png.Encode(tempFile, decoded)
-		case "image/gif":
-			err = gif.Encode(tempFile, decoded, nil)
-		default:
-			panic("unreachable")
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to encode image: %w", err)
+		if _, err = tempFile.Write(encoded); err != nil {
+			return nil, fmt.Errorf("failed to write re-encoded image: %w", err)
 		}
 		_, err = tempFile.Seek(0, io.SeekStart)
 		if err != nil {

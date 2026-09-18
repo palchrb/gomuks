@@ -227,6 +227,19 @@ await client.store.deleteCache(); location.reload()
 
 ## Media
 
+Uploads take the same options as the server build, so the upload dialog's
+controls do what they say: re-encoding to jpeg, png or gif, resizing by size
+or percentage, the quality setting, sending as a plain file, and marking a
+recording as a voice message. The image work is shared with the server build
+(`gomuks.ReencodeImage`), since it is pure Go.
+
+Three things in that dialog still cannot work in a browser, because they need
+ffmpeg: re-encoding to a video or audio format, which is refused with an
+explanation rather than ignored; the waveform on a voice message, which is
+left out while the message is still marked as a voice message; and thumbnails
+for videos. Uploads are also held in memory rather than streamed, so a very
+large file can exhaust the worker.
+
 Media is served by a service worker (`web/public/wasmuks-media-sw.js`) out of
 the Cache API, with the backend in the worker downloading on demand. The
 server build serves the same URLs over HTTP, so the frontend does not know the
