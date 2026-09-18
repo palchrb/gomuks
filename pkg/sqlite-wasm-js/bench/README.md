@@ -47,6 +47,35 @@ In `memory` mode (no I/O, pure bridge cost) the same operations went from
 600 / 205 / 245 ms to 93 / 60 / 31 ms. The remaining OPFS insert cost is the
 actual file writes (~60 MB/s).
 
+### Which change did what
+
+Both OPFS variants below use the batched bridge and the statement cache and
+differ only in locking mode and journal, so the difference is the pragmas
+alone. Same conditions as above; run-to-run variance on the point lookups is
+around 20 %, which is far smaller than the effect.
+
+| Operation | batched bridge, normal locking | + EXCLUSIVE and PERSIST |
+|---|---|---|
+| insert 2000 rows in one transaction | 322 | 312 |
+| timeline select, 2000 rows | 79 | 61 |
+| 500 point lookups by unique key | 420-510 | 21 |
+
+So the two changes do different jobs, and conflating them is easy:
+
+* The **batched bridge** is what makes bulk work faster: inserts roughly halve
+  and the timeline select drops by about two thirds.
+* **EXCLUSIVE locking** is what makes many small reads fast, by a factor of
+  twenty or more. Under normal locking each read transaction takes and
+  releases a file lock and cannot trust its page cache between statements, and
+  on the SAH pool each of those is a synchronous file operation. Holding the
+  lock for the session brings 500 lookups down to memory-mode speed (21 ms
+  against 22 ms with no file at all). This matters because hicli does a great
+  many small reads per sync and per room opened.
+* The **statement cache** barely shows up here: the `reuse` variant, which
+  reuses one prepared statement for every row, is within noise of `current`.
+  It was kept because it removes a bridge crossing per query, not because the
+  benchmark rewards it.
+
 ## Startup smoke test
 
 `smoke.mjs` serves a built `web/dist` in headless Chromium and checks that the
