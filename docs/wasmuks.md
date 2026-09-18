@@ -298,6 +298,12 @@ Not done, kept as options:
   ```
 * **Native gomuks per user** as a compose file, for people who use the
   server machine itself as a client.
+* **Upstream**: the wasm build stores a failed media download in the Cache API
+  as a 500 and the service worker serves any cached response, so one bad fetch
+  breaks that image permanently. The backend it wraps already handles this
+  properly: `database.MediaError` keeps an attempt count and retries with
+  exponential backoff, so the Cache API layer defeats the retry logic that is
+  already there. Fixed here.
 * **Upstream**: `pkg/sqlite-wasm-js/stmt.go` at the version this fork started
   from returns `LastInsertId` and `RowsAffected` the wrong way round for
   prepared statements, so an UPDATE reports the last inserted rowid as its
