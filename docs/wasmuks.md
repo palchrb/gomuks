@@ -196,8 +196,11 @@ without long-lived caching.
 **An avatar or an image stays broken while others load.** A failed download
 used to be stored in the media cache as an error and served from then on, so
 one slow or interrupted fetch broke that image permanently. Failures are no
-longer cached, and an entry left over from before is discarded on the next
-attempt, so this heals itself once the new build is loaded.
+longer cached there. Instead the backend remembers them the way the server
+build does, with a backoff that starts at a few seconds and grows to a week,
+so a file the homeserver no longer has is not re-requested on every render.
+An entry left over from the old behaviour is discarded on the next attempt,
+so this heals itself once the new build is loaded.
 
 **A room sits in the wrong place in the room list on one device only.** The
 room list is restored from an IndexedDB cache on every load, and the backend
@@ -302,8 +305,9 @@ Not done, kept as options:
   as a 500 and the service worker serves any cached response, so one bad fetch
   breaks that image permanently. The backend it wraps already handles this
   properly: `database.MediaError` keeps an attempt count and retries with
-  exponential backoff, so the Cache API layer defeats the retry logic that is
-  already there. Fixed here.
+  exponential backoff, but the wasm media path never consulted it, so the
+  Cache API layer made the failure permanent instead. Fixed here on both
+  sides.
 * **Upstream**: `pkg/sqlite-wasm-js/stmt.go` at the version this fork started
   from returns `LastInsertId` and `RowsAffected` the wrong way round for
   prepared statements, so an UPDATE reports the last inserted rowid as its

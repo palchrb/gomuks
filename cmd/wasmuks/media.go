@@ -25,17 +25,21 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"syscall/js"
 
 	"github.com/rs/zerolog"
+	"go.mau.fi/util/jsontime"
+	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
 	"go.mau.fi/gomuks/pkg/gomuks"
+	"go.mau.fi/gomuks/pkg/hicli/database"
 )
 
 func uploadMedia(ctx context.Context, fileName string, encrypt bool, payload []byte) (*event.MessageEventContent, error) {
@@ -120,9 +124,21 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 		log.Error().Msg("Tried to download encrypted media without encrypted flag")
 		return
 	}
+	// A download that failed is remembered with a growing backoff, the same as
+	// the server build does, so a file the homeserver no longer has isn't
+	// re-requested on every render. The deferred fallback above answers with
+	// the letter avatar in the meantime.
+	if cacheEntry != nil && cacheEntry.Error.UseCache() {
+		log.Debug().
+			Int("attempts", cacheEntry.Error.Attempts).
+			Time("last_attempt", cacheEntry.Error.ReceivedAt.Time).
+			Msg("Not retrying media download yet")
+		return
+	}
 	resp, err := gmx.Client.Client.Download(mautrix.WithMaxRetries(ctx, 0), mxc)
 	if err != nil {
 		log.Err(err).Msg("Failed to download media")
+		rememberMediaError(ctx, mxc, cacheEntry)
 		return
 	}
 	defer func() {
@@ -168,6 +184,33 @@ func realJSDownloadCallback(ctx context.Context, path, rawQuery string, callback
 		Str("content_disposition", contentDisposition).
 		Int("length", len(data)).
 		Msg("Download successful")
+}
+
+// rememberMediaError records a failed download on the media cache entry with
+// an incremented attempt count, which is what database.MediaError's backoff is
+// calculated from. Mirrors addErrorToCacheEntry in pkg/gomuks/mediadownload.go,
+// minus the HTTP specifics that only the server build needs.
+func rememberMediaError(ctx context.Context, mxc id.ContentURI, cacheEntry *database.Media) {
+	log := zerolog.Ctx(ctx)
+	if cacheEntry == nil {
+		cacheEntry = &database.Media{MXC: mxc}
+	}
+	if cacheEntry.Error == nil {
+		cacheEntry.Error = &database.MediaError{
+			ReceivedAt: jsontime.UnixMilliNow(),
+			Attempts:   1,
+		}
+	} else {
+		cacheEntry.Error.Attempts++
+		cacheEntry.Error.ReceivedAt = jsontime.UnixMilliNow()
+	}
+	if cacheEntry.Error.Matrix == nil {
+		cacheEntry.Error.Matrix = ptr.Ptr(mautrix.MUnknown.WithMessage("Failed to download media"))
+		cacheEntry.Error.StatusCode = http.StatusBadGateway
+	}
+	if err := gmx.Client.DB.Media.Put(ctx, cacheEntry); err != nil {
+		log.Err(err).Msg("Failed to save errored media cache entry")
+	}
 }
 
 func jsDownloadCallback(_ js.Value, args []js.Value) any {
