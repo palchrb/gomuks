@@ -35,6 +35,7 @@ import (
 	"go.mau.fi/util/exstrings"
 	"go.mau.fi/util/ptr"
 	"go.mau.fi/zeroconfig"
+	"maunium.net/go/mautrix/crypto"
 	"maunium.net/go/mautrix/event"
 
 	"go.mau.fi/gomuks/pkg/gomuks"
@@ -112,6 +113,23 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 		}()
 		return nil
 	}
+	// Commands the shared client doesn't implement because the server build
+	// answers them over HTTP instead. pkg/ffi dispatches the same set for the
+	// mobile apps; without this they are rejected as unknown and the frontend
+	// falls back to an HTTP endpoint that doesn't exist here.
+	if handler, ok := serverCommands[wrappedCmd.Command]; ok {
+		go func() {
+			defer recoverCommandPanic(string(wrappedCmd.Command), wrappedCmd.RequestID)
+			ctx := gmx.Log.With().Stringer("action", wrappedCmd.Command).Logger().WithContext(context.Background())
+			resp, err := handler(ctx, wrappedCmd.Data)
+			if err != nil {
+				postMessage(jsoncmd.RespError, wrappedCmd.RequestID, ptr.Ptr(gomuks.ToRespError(err)))
+			} else {
+				postMessage(jsoncmd.RespSuccess, wrappedCmd.RequestID, resp)
+			}
+		}()
+		return nil
+	}
 	if wrappedCmd.Command == jsoncmd.ReqRestoreKeyBackup {
 		// The native server streams this over an HTTP endpoint; in wasm the
 		// progress goes out as events and the final state as the response.
@@ -133,6 +151,41 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 		postMessage(resp.Command, resp.RequestID, resp.Data)
 	}()
 	return nil
+}
+
+var serverCommands = map[jsoncmd.Name]func(context.Context, json.RawMessage) (any, error){
+	jsoncmd.ReqGetURLPreview: func(ctx context.Context, data json.RawMessage) (any, error) {
+		return jsoncmd.GetURLPreview.RunCtx(ctx, data, func(
+			ctx context.Context, params *jsoncmd.GetURLPreviewParams,
+		) (*event.BeeperLinkPreview, error) {
+			return gmx.GetURLPreview(ctx, params.URL, params.Encrypt)
+		})
+	},
+	jsoncmd.ReqExportKeys: func(ctx context.Context, data json.RawMessage) (any, error) {
+		return jsoncmd.ExportKeys.RunCtx(ctx, data, func(
+			ctx context.Context, params *jsoncmd.ExportKeysParams,
+		) (string, error) {
+			var sessions dbutil.RowIter[*crypto.InboundGroupSession]
+			if params.RoomID == "" {
+				sessions = gmx.Client.CryptoStore.GetAllGroupSessions(ctx)
+			} else {
+				sessions = gmx.Client.CryptoStore.GetGroupSessionsForRoom(ctx, params.RoomID)
+			}
+			export, err := crypto.ExportKeysIter(params.Passphrase, sessions)
+			return string(export), err
+		})
+	},
+	jsoncmd.ReqImportKeys: func(ctx context.Context, data json.RawMessage) (any, error) {
+		return jsoncmd.ImportKeys.RunCtx(ctx, data, func(
+			ctx context.Context, params *jsoncmd.ImportKeysParams,
+		) (*jsoncmd.ImportKeysResponse, error) {
+			imported, total, err := gmx.Client.Crypto.ImportKeys(ctx, params.Passphrase, []byte(params.Export))
+			if err != nil {
+				return nil, err
+			}
+			return &jsoncmd.ImportKeysResponse{Imported: imported, Total: total}, nil
+		})
+	},
 }
 
 func restoreKeyBackup(reqID int64) func(context.Context, *jsoncmd.RestoreKeyBackupParams) (*jsoncmd.KeyBackupRestoreProgress, error) {

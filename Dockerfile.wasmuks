@@ -20,6 +20,9 @@ COPY . .
 RUN cd web \
 	&& go run ../pkg/hicli/cmdspec/print src/api/types/stdcommands.json src/api/types/stdcommands.d.ts \
 	&& ./build-wasm.sh
+# Code block themes. The server build generates this CSS on request; a static
+# deployment has to ship it, or code blocks in messages come out unstyled.
+RUN mkdir -p /codeblock && go run ./cmd/chromagen /codeblock/
 
 FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-alpine AS web
 WORKDIR /src/web
@@ -28,6 +31,7 @@ RUN npm ci --include=dev
 COPY web/ ./
 COPY --from=wasm /src/web/src/api/wasm/_gomuks.wasm src/api/wasm/_gomuks.wasm
 COPY --from=wasm /src/web/src/api/types/stdcommands.json /src/web/src/api/types/stdcommands.d.ts src/api/types/
+COPY --from=wasm /codeblock public/_gomuks/codeblock
 RUN npm run build \
 	&& find dist -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.svg' \) \
 		-exec gzip -9 -k {} +

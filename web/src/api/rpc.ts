@@ -105,6 +105,8 @@ export default abstract class RPCClient {
 	public readonly rpcMediaUpload: boolean = false
 	// Whether key backup restore is available as an RPC command (wasm) instead of an HTTP endpoint.
 	public readonly rpcKeyRestore: boolean = false
+	// Whether URL previews and key export/import are RPC commands (wasm) rather than HTTP endpoints.
+	public readonly rpcServerCommands: boolean = false
 	public getCachedServerTimestamp?: () => number | undefined
 	protected readonly pendingRequests: Map<number, {
 		resolve: (data: unknown) => void,
@@ -214,6 +216,18 @@ export default abstract class RPCClient {
 
 	restoreKeyBackup(room_id?: RoomID): Promise<KeyRestoreProgress> {
 		return this.request("restore_key_backup", { room_id })
+	}
+
+	getURLPreview(url: string, encrypt: boolean): Promise<URLPreview> {
+		return this.request("get_url_preview", { url, encrypt })
+	}
+
+	exportKeys(passphrase: string, room_id?: RoomID): Promise<string> {
+		return this.request("export_keys", { passphrase, room_id })
+	}
+
+	importKeys(passphrase: string, exportData: string): Promise<{ imported: number, total: number }> {
+		return this.request("import_keys", { passphrase, export: exportData })
 	}
 
 	sendMessage(params: SendMessageParams): Promise<RawDBEvent | null> {

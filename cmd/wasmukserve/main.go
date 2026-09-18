@@ -20,9 +20,11 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"log"
@@ -33,6 +35,7 @@ import (
 	"strings"
 	"time"
 
+	"go.mau.fi/gomuks/version"
 	"go.mau.fi/gomuks/web"
 )
 
@@ -46,6 +49,31 @@ func envOr(key, def string) string {
 type server struct {
 	files      fs.FS
 	configPath string
+	// index.html with the version meta tag filled in, see loadIndex. Nil if
+	// the placeholder wasn't found, in which case the file is served as-is.
+	index []byte
+}
+
+// The server build injects three meta tags here; only the version one applies
+// to a static deployment. The frontend decides it is running the wasm backend
+// by the ABSENCE of gomuks-frontend-etag, so that one must not be added, and
+// there is no push key to advertise.
+const versionMetaTemplate = "\t<meta name=\"gomuks-version-description\" content=\"%s\">"
+
+// loadIndex fills in the version so the settings screen can show it, the same
+// as pkg/gomuks does when it starts its HTTP server.
+func (s *server) loadIndex() {
+	data, err := fs.ReadFile(s.files, "index.html")
+	if err != nil {
+		return
+	}
+	placeholder := []byte("<!-- etag placeholder -->")
+	if !bytes.Contains(data, placeholder) {
+		return
+	}
+	s.index = bytes.Replace(data, placeholder, []byte(fmt.Sprintf(
+		versionMetaTemplate, html.EscapeString(version.Gomuks.VersionDescription),
+	)), 1)
 }
 
 // noCacheFiles are entry points that must always be re-validated so a new
@@ -77,6 +105,13 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Client-side routes: serve the app shell.
 		name = "index.html"
 		file, info, err = s.open(name)
+	}
+	if err == nil && name == "index.html" && s.index != nil {
+		_ = file.Close()
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		http.ServeContent(w, r, name, info.ModTime(), bytes.NewReader(s.index))
+		return
 	}
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -186,9 +221,11 @@ func main() {
 			log.Printf("config %s is a directory, not a file (Docker creates one when the bind mount source is missing); serving without config.json", *configPath)
 		}
 	}
+	handler := &server{files: files, configPath: *configPath}
+	handler.loadIndex()
 	srv := &http.Server{
 		Addr:              *listen,
-		Handler:           &server{files: files, configPath: *configPath},
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Printf("Serving gomuks web (wasm) on http://%s", *listen)

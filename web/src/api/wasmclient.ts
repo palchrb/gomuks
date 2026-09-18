@@ -101,6 +101,7 @@ interface RawJSONCommand extends BaseRPCCommand<string> {
 export default class WasmClient extends RPCClient {
 	public readonly rpcMediaUpload = true
 	public readonly rpcKeyRestore = true
+	public readonly rpcServerCommands = true
 	public readonly storageStatus = new CachedEventDispatcher<StorageStatus>()
 	protected isConnected = true
 	#worker?: Worker

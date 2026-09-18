@@ -267,6 +267,15 @@ class GomuksWidgetDriver extends WidgetDriver {
 	}
 
 	async uploadFile(file: XMLHttpRequestBodyInit): Promise<{ contentUri: string }> {
+		if (this.client.rpc.rpcMediaUpload) {
+			// No HTTP endpoint in the wasm build.
+			const content = await this.client.rpc.uploadMedia(
+				file instanceof Blob ? file : new Blob([file as BlobPart]),
+				"widget-upload",
+				false,
+			)
+			return { contentUri: content.url! }
+		}
 		const res = await fetch("_gomuks/upload?encrypt=false", {
 			method: "POST",
 			body: file,

@@ -427,6 +427,17 @@ type ExportKeysParams struct {
 	RoomID     id.RoomID `json:"room_id,omitempty"`
 }
 
+type ImportKeysParams struct {
+	Passphrase string `json:"passphrase"`
+	// The contents of a key export file.
+	Export string `json:"export"`
+}
+
+type ImportKeysResponse struct {
+	Imported int `json:"imported"`
+	Total    int `json:"total"`
+}
+
 type RestoreKeyBackupParams struct {
 	// If set, only keys for this room are restored.
 	RoomID id.RoomID `json:"room_id,omitempty"`

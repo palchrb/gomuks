@@ -218,6 +218,22 @@ rebuilt from the database:
 await client.store.deleteCache(); location.reload()
 ```
 
+## Building without Docker
+
+The Docker build does all of this; doing it by hand needs one extra step the
+server build doesn't, because the server generates the code block themes on
+request and a static deployment has to ship them:
+
+```sh
+cd web
+go run ../pkg/hicli/cmdspec/print src/api/types/stdcommands.json src/api/types/stdcommands.d.ts
+mkdir -p public/_gomuks/codeblock && go run ../cmd/chromagen public/_gomuks/codeblock/
+./build-wasm.sh
+npm ci --include=dev && npm run build
+```
+
+Without that step code blocks in messages come out with no colours.
+
 ## Why startup costs what it does
 
 Opening the page runs the whole backend from nothing: the SQLite module and

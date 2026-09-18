@@ -699,19 +699,25 @@ const MessageComposer = () => {
 	}
 	const resolvePreview = useCallback((url: string) => {
 		setState(s => ({ loadingPreviews: [...s.loadingPreviews, url]}))
-		fetch(`_gomuks/url_preview?encrypt=${isEncrypted}&url=${encodeURIComponent(url)}`, {
-			method: "GET",
-		})
-			.then(async res => {
+		const fetchPreview = client.rpc.rpcServerCommands
+			// No HTTP endpoints in the wasm build; the backend answers this as
+			// a command instead.
+			? client.rpc.getURLPreview(url, isEncrypted)
+			: fetch(`_gomuks/url_preview?encrypt=${isEncrypted}&url=${encodeURIComponent(url)}`, {
+				method: "GET",
+			}).then(async res => {
 				const json = await res.json()
 				if (!res.ok) {
 					throw new Error(json.error)
-				} else {
-					setState(s => ({
-						previews: [...s.previews, json],
-						loadingPreviews: s.loadingPreviews.filter(u => u !== url),
-					}))
 				}
+				return json
+			})
+		fetchPreview
+			.then(preview => {
+				setState(s => ({
+					previews: [...s.previews, preview],
+					loadingPreviews: s.loadingPreviews.filter(u => u !== url),
+				}))
 			})
 			.catch(err => {
 				console.error("Error fetching preview for URL", url, err)
@@ -719,7 +725,7 @@ const MessageComposer = () => {
 					loadingPreviews: s.loadingPreviews.filter(u => u !== url),
 				}))
 			})
-	}, [isEncrypted])
+	}, [client.rpc, isEncrypted])
 	// To ensure the cursor jumps to the end, do this in an effect rather than as the initial value of useState
 	// To try to avoid the input bar flashing, use useLayoutEffect instead of useEffect
 	useLayoutEffect(() => {

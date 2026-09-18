@@ -113,6 +113,7 @@ const (
 	ReqDownloadMedia  Name = "download_media"
 	ReqGetURLPreview  Name = "get_url_preview"
 	ReqExportKeys     Name = "export_keys"
+	ReqImportKeys     Name = "import_keys"
 	// ReqRestoreKeyBackup is handled by the wasm build only; the native
 	// server exposes the same operation as a server-sent events HTTP endpoint.
 	ReqRestoreKeyBackup Name = "restore_key_backup"
@@ -348,11 +349,14 @@ var (
 	DownloadMedia = &CommandSpec[*DownloadMediaParams, *DownloadMediaResponse]{Name: ReqDownloadMedia}
 	// GetURLPreview generates a URL preview for the given URL. This should be used
 	// when sending a message to attach bundled URL previews, not when receiving messages.
-	// This is only available in the C FFI. HTTP clients must use the /url_preview API.
+	// Only available in the C FFI and the wasm build. HTTP clients must use the /url_preview API.
 	GetURLPreview = &CommandSpec[*GetURLPreviewParams, *event.BeeperLinkPreview]{Name: ReqGetURLPreview}
 	// ExportKeys exports megolm room keys and returns the exported file as a string.
-	// This is only available in the C FFI. HTTP clients must use the /keys/export API.
+	// Only available in the C FFI and the wasm build. HTTP clients must use the /keys/export API.
 	ExportKeys = &CommandSpec[*ExportKeysParams, string]{Name: ReqExportKeys}
+	// ImportKeys imports megolm room keys from the contents of an export file.
+	// Only available in the wasm build. HTTP clients must use the /keys/import API.
+	ImportKeys = &CommandSpec[*ImportKeysParams, *ImportKeysResponse]{Name: ReqImportKeys}
 	// RestoreKeyBackup fetches megolm room keys from the server-side key backup and stores them locally.
 	// Progress is reported with `key_backup_restore_progress` events carrying the request ID; the response
 	// contains the final progress. Only available in the wasm build; the server exposes the same operation
@@ -464,6 +468,7 @@ var AllNames = []Name{
 	ReqDownloadMedia,
 	ReqGetURLPreview,
 	ReqExportKeys,
+	ReqImportKeys,
 	ReqRestoreKeyBackup,
 	RespError,
 	RespSuccess,

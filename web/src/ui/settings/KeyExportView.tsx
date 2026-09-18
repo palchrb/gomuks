@@ -80,10 +80,41 @@ interface KeyExportViewProps {
 }
 
 const KeyExportView = ({ room }: KeyExportViewProps) => {
+	const client = use(ClientContext)!
 	const [passphrase, setPassphrase] = useState("")
 	const [hasFile, setHasFile] = useState(false)
+	const [keyFile, setKeyFile] = useState<File | null>(null)
+	const [keyStatus, setKeyStatus] = useState<string | null>(null)
+	// The server build has HTTP endpoints for these and the forms below post
+	// to them. The wasm build answers the same operations as commands, so do
+	// them here and hand the browser a file rather than opening a tab.
+	const rpcKeys = client.rpc.rpcServerCommands
+	const doExport = (roomID?: RoomID) => {
+		setKeyStatus("Exporting...")
+		client.rpc.exportKeys(passphrase, roomID).then(exported => {
+			const name = roomID ? `gomuks-keys-${roomID}.txt` : "gomuks-keys.txt"
+			const url = URL.createObjectURL(new Blob([exported], { type: "text/plain" }))
+			const link = document.createElement("a")
+			link.href = url
+			link.download = name
+			link.click()
+			URL.revokeObjectURL(url)
+			setKeyStatus(`Exported to ${name}`)
+		}, err => setKeyStatus(`Export failed: ${err}`))
+	}
+	const doImport = () => {
+		if (!keyFile) {
+			return
+		}
+		setKeyStatus("Importing...")
+		keyFile.text()
+			.then(text => client.rpc.importKeys(passphrase, text))
+			.then(
+				res => setKeyStatus(`Imported ${res.imported} of ${res.total} keys`),
+				err => setKeyStatus(`Import failed: ${err}`),
+			)
+	}
 	const openModal = use(ModalContext)
-	const client = use(ClientContext)!
 	const importBackup = (roomID?: RoomID) => {
 		let progress: KeyRestoreProgress = {
 			stage: "fetching",
@@ -158,36 +189,61 @@ const KeyExportView = ({ room }: KeyExportViewProps) => {
 			onChange={evt => setPassphrase(evt.target.value)}
 			placeholder="Passphrase"
 		/>
-		<form
-			className="import-buttons"
-			action="_gomuks/keys/import"
-			encType="multipart/form-data"
-			method="post"
-			target="_blank"
-		>
-			<input type="password" name="passphrase" hidden readOnly value={passphrase} />
-			<input
-				className="import-file"
-				type="file"
-				accept="text/plain"
-				name="export"
-				defaultValue=""
-				onChange={evt => setHasFile(!!evt.target.files?.length)}
-			/>
-			<button type="submit" disabled={passphrase == "" || !hasFile}>Import file</button>
-		</form>
-		<div className="export-buttons">
-			<form action="_gomuks/keys/export" method="post" target="_blank">
+		{rpcKeys ? <>
+			<div className="import-buttons">
+				<input
+					className="import-file"
+					type="file"
+					accept="text/plain"
+					onChange={evt => setKeyFile(evt.target.files?.[0] ?? null)}
+				/>
+				<button onClick={doImport} disabled={passphrase == "" || !keyFile}>Import file</button>
+			</div>
+			<div className="export-buttons">
+				<button onClick={() => doExport()} disabled={passphrase == ""}>Export all keys</button>
+				{room && (
+					<button onClick={() => doExport(room.roomID)} disabled={passphrase == ""}>
+						Export room keys
+					</button>
+				)}
+			</div>
+			{keyStatus && <div className="info-text">{keyStatus}</div>}
+		</> : <>
+			<form
+				className="import-buttons"
+				action="_gomuks/keys/import"
+				encType="multipart/form-data"
+				method="post"
+				target="_blank"
+			>
 				<input type="password" name="passphrase" hidden readOnly value={passphrase} />
-				<button type="submit" disabled={passphrase == ""}>Export all keys</button>
+				<input
+					className="import-file"
+					type="file"
+					accept="text/plain"
+					name="export"
+					defaultValue=""
+					onChange={evt => setHasFile(!!evt.target.files?.length)}
+				/>
+				<button type="submit" disabled={passphrase == "" || !hasFile}>Import file</button>
 			</form>
-			{room && (
-				<form action={`_gomuks/keys/export/${encodeURIComponent(room.roomID)}`} method="post" target="_blank">
+			<div className="export-buttons">
+				<form action="_gomuks/keys/export" method="post" target="_blank">
 					<input type="password" name="passphrase" hidden readOnly value={passphrase} />
-					<button type="submit" disabled={passphrase == ""}>Export room keys</button>
+					<button type="submit" disabled={passphrase == ""}>Export all keys</button>
 				</form>
-			)}
-		</div>
+				{room && (
+					<form
+						action={`_gomuks/keys/export/${encodeURIComponent(room.roomID)}`}
+						method="post"
+						target="_blank"
+					>
+						<input type="password" name="passphrase" hidden readOnly value={passphrase} />
+						<button type="submit" disabled={passphrase == ""}>Export room keys</button>
+					</form>
+				)}
+			</div>
+		</>}
 		<hr/>
 		<div className="key-backup-buttons">
 			{room && <button onClick={() => importBackup(room.roomID)}>Import room backup</button>}
