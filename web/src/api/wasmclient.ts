@@ -87,9 +87,6 @@ async function loadWasmConfig(): Promise<Partial<WasmuksInit>> {
 }
 
 const LOCK_NAME = "gomuks-wasm"
-// What gomuks.ReencodeImage can produce. Everything else the upload dialog
-// offers needs ffmpeg, which the browser build doesn't have.
-const IMAGE_REENCODE_TARGETS = ["image/webp", "image/jpeg", "image/png", "image/gif"]
 // How often a resumed tab may check whether a new build has been deployed,
 // and how long after a reload for that reason another one is refused.
 const UPDATE_CHECK_INTERVAL_MS = 60_000
@@ -219,14 +216,6 @@ export default class WasmClient extends RPCClient {
 		file: Blob, filename: string, encrypt: boolean, encodingOpts?: MediaEncodingOptions,
 	): Promise<MediaMessageEventContent> {
 		const request_id = this.nextRequestID
-		if (encodingOpts?.encode_to && !IMAGE_REENCODE_TARGETS.includes(encodingOpts.encode_to)) {
-			// Re-encoding audio and video needs a codec the browser doesn't
-			// hand out. Uploading the original is what a voice message needs
-			// anyway, since the recording is already playable, and it beats
-			// refusing to send at all.
-			console.warn(`Uploading as-is: can't re-encode to ${encodingOpts.encode_to} in the browser`)
-			encodingOpts = { ...encodingOpts, encode_to: undefined }
-		}
 		// What the server build gets from ffmpeg, read from the browser
 		// instead: duration and dimensions, a thumbnail frame for video, and
 		// the waveform of a voice message.

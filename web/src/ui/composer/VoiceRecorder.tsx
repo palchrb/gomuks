@@ -14,7 +14,6 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import { use, useEffect, useRef, useState } from "react"
-import ClientContext from "../ClientContext.ts"
 import { ModalCloseContext } from "../modal"
 import DeleteIcon from "@/icons/delete.svg?react"
 import PauseIcon from "@/icons/pause.svg?react"
@@ -24,19 +23,6 @@ import "./VoiceRecorder.css"
 
 interface VoiceRecorderProps {
 	onFinish: (file: File, isVoice?: true) => void
-}
-
-// Maps a recording's container to a file extension, for the builds that send
-// the recording as it was made rather than converting it.
-function extensionFor(mime: string): string {
-	if (mime.startsWith("audio/ogg") || mime.startsWith("video/ogg")) {
-		return ".ogg"
-	} else if (mime.startsWith("audio/webm") || mime.startsWith("video/webm")) {
-		return ".webm"
-	} else if (mime.startsWith("audio/mp4")) {
-		return ".m4a"
-	}
-	return ""
 }
 
 function chooseMime() {
@@ -50,7 +36,6 @@ function chooseMime() {
 }
 
 const VoiceRecorder = ({ onFinish }: VoiceRecorderProps) => {
-	const client = use(ClientContext)!
 	const [recording, setRecording] = useState<boolean>(false)
 	const [duration, setDuration] = useState(0)
 	const recorder = useRef<MediaRecorder>(null)
@@ -108,13 +93,7 @@ const VoiceRecorder = ({ onFinish }: VoiceRecorderProps) => {
 		if (!recorder.current) {
 			return
 		}
-		// The server build converts the recording to ogg/opus, so the name has
-		// to match that result, not the recording. Without ffmpeg nothing is
-		// converted and the name has to match the bytes instead.
-		const extension = client.rpc.rpcMediaUpload ? extensionFor(recorder.current.mimeType) : ".ogg"
-		const file = new File(blobs.current, `Voice message${extension}`, {
-			type: recorder.current.mimeType,
-		})
+		const file = new File(blobs.current, "Voice message.ogg", { type: recorder.current.mimeType })
 		onFinish(file, true)
 	}
 	const finishRecord = () => recorder.current?.stop()

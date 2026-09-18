@@ -57,10 +57,11 @@ interface dimensions {
 const MediaUploadDialog = ({ file, blobURL, doUploadFile, isEncrypted, isVoice }: MediaUploadDialogProps) => {
 	const videoRef = useRef<HTMLVideoElement>(null)
 	const [name, setName] = useState(file.name)
-	// Re-encoding video and audio needs ffmpeg, which only the server build
-	// has. Images are pure Go and work in both.
-	const ffmpegAvailable = !use(ClientContext)!.rpc.rpcMediaUpload
-	const needsVoiceReenc = isVoice && ffmpegAvailable && file.type !== voiceMimeType
+	// Transcoding needs ffmpeg, which only the server build has. Images are
+	// pure Go, and a voice recording only needs repackaging, so both work in
+	// either build; the rest would be ignored, so they aren't offered.
+	const canTranscode = !use(ClientContext)!.rpc.rpcMediaUpload
+	const needsVoiceReenc = isVoice && file.type !== voiceMimeType
 	const initialReencTarget = nonEncodableSources.includes(file.type)
 		? "image/jpeg"
 		: needsVoiceReenc
@@ -104,15 +105,9 @@ const MediaUploadDialog = ({ file, blobURL, doUploadFile, isEncrypted, isVoice }
 		previewContent = <video controls onLoadedMetadata={videoMetaLoaded} ref={videoRef}>
 			<source src={blobURL} type={file.type} />
 		</video>
-		if (!ffmpegAvailable) {
-			// Re-encoding video or audio needs ffmpeg, which the browser build
-			// doesn't have, so don't offer targets that would be ignored.
-			reencTargets = null
-		} else {
-			reencTargets = videoReencTargets
-		}
+		reencTargets = canTranscode ? videoReencTargets : null
 	} else if (file.type.startsWith("audio/")) {
-		reencTargets = ffmpegAvailable ? (isVoice ? voiceReencTargets : audioReencTargets) : null
+		reencTargets = isVoice || canTranscode ? (isVoice ? voiceReencTargets : audioReencTargets) : null
 		previewContent = <audio controls>
 			<source src={blobURL} type={file.type} />
 		</audio>

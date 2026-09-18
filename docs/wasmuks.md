@@ -249,9 +249,11 @@ what it needs to be, so `pkg/oggopus` moves the packets into an Ogg container
 instead of converting them. No codec is involved and nothing is re-encoded.
 It matters in practice: Element X will not play a WebM voice message.
 
-What still cannot work is re-encoding video, or audio that was not recorded
-as Opus, since that needs a codec. The upload dialog no longer offers those
-targets in this build, and anything it cannot repackage is sent as recorded. A WebAssembly build of ffmpeg would cover it, but it
+The frontend asks for ogg/opus on every voice message exactly as it does for
+the server build; only how the request is met differs. What still cannot work
+is re-encoding video, or audio that was not recorded as Opus, since that
+needs a codec: the upload dialog does not offer those targets in this build,
+and anything that cannot be repackaged is sent as recorded. A WebAssembly build of ffmpeg would cover it, but it
 is around 30 MB on its own, which is the same size as the whole client, so it
 would only be worth loading at the moment someone asks for a conversion.
 Uploads are also held in memory rather than streamed, so a very large file can

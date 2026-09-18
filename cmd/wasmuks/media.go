@@ -29,7 +29,6 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	"path"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -61,6 +60,13 @@ type uploadExtras struct {
 	Waveform   []int `json:"waveform,omitempty"`
 }
 
+// wantsOggOpus reports whether a re-encode request is for Opus in Ogg, which
+// is what the frontend asks for on every voice message.
+func wantsOggOpus(encodeTo string) bool {
+	mimeType, _, err := mime.ParseMediaType(encodeTo)
+	return err == nil && mimeType == "audio/ogg"
+}
+
 func uploadMedia(
 	ctx context.Context,
 	params jsoncmd.UploadMediaParams,
@@ -81,25 +87,23 @@ func uploadMedia(
 			Int("after", len(encoded)).
 			Msg("Re-encoded upload")
 		payload = encoded
-	} else if params.EncodeTo != "" {
-		return nil, fmt.Errorf("re-encoding to %s needs ffmpeg, which the browser build doesn't have", params.EncodeTo)
-	}
-	// A browser records a voice message as Opus in a WebM container, while the
-	// voice message spec and clients such as Element X expect Ogg. The server
-	// build converts with ffmpeg; the audio is already Opus either way, so
-	// only the container has to change and no codec is needed.
-	if params.VoiceMessage {
+	} else if wantsOggOpus(params.EncodeTo) {
+		// The frontend asks for this for every voice message, the same as it
+		// does for the server build. Browsers record Opus already, so the
+		// request is satisfied by moving the packets into an Ogg container
+		// rather than by transcoding.
 		if ogg, remuxErr := oggopus.Remux(payload); remuxErr != nil {
-			log.Debug().Err(remuxErr).Msg("Not repackaging voice message as ogg, sending as recorded")
+			log.Debug().Err(remuxErr).Msg("Not repackaging as ogg, sending as recorded")
 		} else {
 			log.Debug().
 				Int("before", len(payload)).
 				Int("after", len(ogg)).
-				Msg("Repackaged voice message from webm to ogg")
+				Msg("Repackaged upload from webm to ogg")
 			payload = ogg
-			params.Filename = strings.TrimSuffix(params.Filename, path.Ext(params.Filename)) + ".ogg"
 			remuxedToOgg = true
 		}
+	} else if params.EncodeTo != "" {
+		return nil, fmt.Errorf("re-encoding to %s needs a codec the browser build doesn't have", params.EncodeTo)
 	}
 	msgType, info, defaultFileName, err := gmx.GenerateFileInfo(ctx, bytes.NewReader(payload))
 	if err != nil {
@@ -118,20 +122,20 @@ func uploadMedia(
 		Info:     info,
 		FileName: fileName,
 	}
+	if remuxedToOgg {
+		// Stated plainly rather than left to content sniffing, which reports
+		// Opus in Ogg as audio/opus.
+		info.MimeType = "audio/ogg"
+		content.MsgType = event.MsgAudio
+	}
 	if params.ForceFile {
 		content.MsgType = event.MsgFile
 	} else if params.VoiceMessage {
-		// webm is a video container even when it holds nothing but audio, so
-		// sniffing a browser recording gives video/webm and, without the
-		// conversion to ogg the server build does, the message would go out
-		// as a video. A voice message is audio by definition.
+		// A voice message is audio by definition, and webm is a video
+		// container even when it holds nothing but audio, so a recording that
+		// could not be repackaged would otherwise go out as a video.
 		content.MsgType = event.MsgAudio
-		if remuxedToOgg {
-			// Stated plainly rather than left to content sniffing, which
-			// reports Opus in Ogg as audio/opus.
-			info.MimeType = "audio/ogg"
-		} else if strings.HasPrefix(info.MimeType, "video/") {
-			// webm is a video container even holding nothing but audio.
+		if strings.HasPrefix(info.MimeType, "video/") {
 			info.MimeType = "audio/" + strings.TrimPrefix(info.MimeType, "video/")
 		}
 		// The server build generates the waveform with ffmpeg; the browser
