@@ -102,7 +102,6 @@ The same file can tune the wasm backend in a `wasm` section (see
 | `single_connection` | `true` | One SQLite connection with EXCLUSIVE locking (fastest per query, but reads wait for running write transactions) or five connections with normal locking. Compare on your own account. |
 | `memory_limit_mb` | `512` | Soft limit for the Go heap in the worker. The garbage collector works harder near it. |
 | `gc_ballast_mb` | `64` | Untouched allocation that keeps the GC's target up. The live heap is tiny between syncs, so without it every few MB of allocation triggered a full collection on the single thread. `0` disables it. |
-| `initial_timeline_limit` | `100` | Events per room requested in the initial sync, same as the native build. Lower is less memory and a faster first sync, but a room whose last messages are further back than this in its timeline gets no preview and is sorted by its last event of any kind (a join, for example) until someone posts. |
 | `log_level` | `debug` | Backend log level in the browser console (`trace`, `debug`, `info`, `warn`, `error`). `debug` logs every decrypted event; `info` keeps only the resource and timing lines below. |
 
 The backend logs the effective values ("wasm configuration") and heap
@@ -174,6 +173,13 @@ To compare database modes on your own account, set
 `Slow command` lines and how quickly rooms open.
 
 ## Troubleshooting
+
+There used to be an `initial_timeline_limit` setting here. It is ignored now,
+with a warning in the console if a config file still sets it: the filter it
+fed is used for every sync rather than only the first, so a small window left
+busy rooms with no message to sort or preview by, and any limited sync (which
+happens whenever a suspended tab resumes) trimmed the stored timeline down to
+it. The window is the same as the native build's.
 
 **A room sits high in the room list with no preview text.** Its last
 messages are further back than the initial sync window, so the backend had no

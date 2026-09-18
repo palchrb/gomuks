@@ -93,8 +93,10 @@ check(typeof state.storage?.persisted === "boolean" || state.storage?.persisted 
 check(logs.some(l => /Initialization complete/.test(l)), "backend logged initialization complete")
 check(!logs.some(l => /panic|pageerror|deadlock/i.test(l)), "no panics or page errors")
 if (!noConfig) {
-	check(logs.some(l => /wasm configuration.*memory_limit_mb: 256.*initial_timeline_limit: 10/.test(l)),
+	check(logs.some(l => /wasm configuration.*memory_limit_mb: 256/.test(l)),
 		"config.json wasm section reached the backend")
+	check(logs.some(l => /Ignoring initial_timeline_limit/.test(l)),
+		"removed config.json setting is reported, not applied")
 }
 check(!logs.some(l => /still in use after startup/.test(l)), "no database connection left in use after startup")
 check(state.pickleKeyInOPFS === true, "pickle key stored in OPFS")

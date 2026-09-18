@@ -160,17 +160,15 @@ func runMigrations() error {
 type wasmuksInit struct {
 	LastServerTS int64 `json:"last_server_ts"`
 	// From the "wasm" section of config.json, see docs/wasmuks.md.
-	SingleConnection     *bool  `json:"single_connection,omitempty"`
-	MemoryLimitMB        int    `json:"memory_limit_mb,omitempty"`
-	GCBallastMB          *int   `json:"gc_ballast_mb,omitempty"`
-	InitialTimelineLimit int    `json:"initial_timeline_limit,omitempty"`
-	LogLevel             string `json:"log_level,omitempty"`
+	SingleConnection *bool  `json:"single_connection,omitempty"`
+	MemoryLimitMB    int    `json:"memory_limit_mb,omitempty"`
+	GCBallastMB      *int   `json:"gc_ballast_mb,omitempty"`
+	LogLevel         string `json:"log_level,omitempty"`
 }
 
 const (
-	defaultMemoryLimitMB        = 512
-	defaultGCBallastMB          = 64
-	defaultInitialTimelineLimit = 100
+	defaultMemoryLimitMB = 512
+	defaultGCBallastMB   = 64
 )
 
 // gcBallast keeps the GC's heap target up. The live heap in wasm is tiny
@@ -354,12 +352,10 @@ func main() {
 		return
 	}
 	gmx.Client.SingleConnectionDB = singleConnection()
-	gmx.Client.InitialSyncTimelineLimit = cmp.Or(initParams.InitialTimelineLimit, defaultInitialTimelineLimit)
 	gmx.Log.Info().
 		Bool("single_connection", gmx.Client.SingleConnectionDB).
 		Int("memory_limit_mb", memoryLimitMB).
 		Int("gc_ballast_mb", ballastMB).
-		Int("initial_timeline_limit", gmx.Client.InitialSyncTimelineLimit).
 		Msg("wasm configuration")
 	gmx.StartClient()
 	if stats := gmx.Client.DB.RawDB.Stats(); stats.InUse > 0 {

@@ -7,7 +7,6 @@
 package hicli
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -126,7 +125,7 @@ func (h *hiSyncer) GetFilterJSON(_ id.UserID) *mautrix.Filter {
 				LazyLoadMembers: true,
 			},
 			Timeline: &mautrix.FilterPart{
-				Limit:           cmp.Or(h.InitialSyncTimelineLimit, 100),
+				Limit:           100,
 				LazyLoadMembers: true,
 			},
 		},

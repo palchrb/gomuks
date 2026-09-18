@@ -34,7 +34,6 @@ export interface WasmuksInit {
 	single_connection?: boolean
 	memory_limit_mb?: number
 	gc_ballast_mb?: number
-	initial_timeline_limit?: number
 	// zerolog level name: trace, debug, info, warn, error. Default debug.
 	log_level?: string
 }
@@ -63,8 +62,12 @@ async function loadWasmConfig(): Promise<Partial<WasmuksInit>> {
 		if (typeof wasm.gc_ballast_mb === "number" && wasm.gc_ballast_mb >= 0) {
 			out.gc_ballast_mb = Math.floor(wasm.gc_ballast_mb)
 		}
-		if (typeof wasm.initial_timeline_limit === "number" && wasm.initial_timeline_limit > 0) {
-			out.initial_timeline_limit = Math.floor(wasm.initial_timeline_limit)
+		if (wasm.initial_timeline_limit !== undefined) {
+			// Removed: the sync filter it fed is used for every sync, not just
+			// the first, so a small window left busy rooms with no message to
+			// sort or preview by, and any limited sync trimmed the stored
+			// timeline down to it.
+			console.warn("Ignoring initial_timeline_limit from config.json, it is no longer configurable")
 		}
 		const logLevels = ["trace", "debug", "info", "warn", "error"]
 		if (typeof wasm.log_level === "string" && logLevels.includes(wasm.log_level)) {
