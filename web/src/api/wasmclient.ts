@@ -84,6 +84,11 @@ async function loadWasmConfig(): Promise<Partial<WasmuksInit>> {
 }
 
 const LOCK_NAME = "gomuks-wasm"
+// How often a resumed tab may check whether a new build has been deployed,
+// and how long after a reload for that reason another one is refused.
+const UPDATE_CHECK_INTERVAL_MS = 60_000
+const UPDATE_RELOAD_COOLDOWN_MS = 60_000
+const UPDATE_RELOAD_KEY = "gomuks_wasm_update_reload"
 
 interface WasmConnectionCommand extends BaseRPCCommand<ConnectionEvent> {
 	command: "wasm-connection"
@@ -109,6 +114,10 @@ export default class WasmClient extends RPCClient {
 	// uses the resume time to give the sync a grace period before saying
 	// anything about it (see WasmSyncBar).
 	readonly lastResumedAt = new NonNullCachedEventDispatcher<number>(Date.now())
+	// index.html as it was when this page loaded, used to notice new builds.
+	#loadedIndexHTML?: string
+	#lastUpdateCheck = 0
+	#updateCheckDisabled = false
 
 	async start() {
 		// The OPFS SAH pool gives exclusive file handles to one worker, so a
@@ -145,6 +154,7 @@ export default class WasmClient extends RPCClient {
 		this.#worker = new WasmuksWorker({ name: JSON.stringify(init) })
 		this.#worker.addEventListener("message", this.#onMessage)
 		document.addEventListener("visibilitychange", this.#onVisibilityChange)
+		this.#checkForUpdate(true).catch(err => console.warn("Failed to record frontend version", err))
 		this.#checkStorage().catch(err => console.warn("Failed to check storage status", err))
 		navigator.serviceWorker.register("wasmuks-media-sw.js").then(reg => {
 			console.info("Media service worker registered", reg)
@@ -221,7 +231,66 @@ export default class WasmClient extends RPCClient {
 	#onVisibilityChange = () => {
 		if (document.visibilityState === "visible") {
 			this.lastResumedAt.emit(Date.now())
+			this.#checkForUpdate(false).catch(err => console.warn("Failed to check for a new build", err))
 		}
+	}
+
+	// The server build tells clients its frontend version over the connection
+	// and they reload when it differs. Here the backend is the page itself, so
+	// compare the served index.html against the one this page was loaded from:
+	// it names the hashed entry point, so it changes with every build. Any
+	// static server works, as long as index.html isn't cached for long, which
+	// it can't be anyway or the browser would never see a new build either.
+	async #checkForUpdate(initial: boolean) {
+		if (this.#updateCheckDisabled) {
+			return
+		}
+		const now = Date.now()
+		if (!initial && (now - this.#lastUpdateCheck < UPDATE_CHECK_INTERVAL_MS || !this.#loadedIndexHTML)) {
+			return
+		}
+		this.#lastUpdateCheck = now
+		let current: string
+		try {
+			const resp = await fetch("index.html", { cache: "no-cache" })
+			if (!resp.ok) {
+				return
+			}
+			current = await resp.text()
+		} catch (err) {
+			// Offline, or something else is serving the page. Try again later.
+			console.debug("Couldn't fetch index.html to check for a new build", err)
+			return
+		}
+		if (initial) {
+			this.#loadedIndexHTML = current
+			return
+		}
+		if (current === this.#loadedIndexHTML) {
+			return
+		}
+		// Reloading right after the page became visible is the least
+		// disruptive moment, and the one where an old build is most likely.
+		let lastReload = 0
+		try {
+			lastReload = Number(localStorage.getItem(UPDATE_RELOAD_KEY)) || 0
+		} catch {
+			// Storage can be unavailable; reloading once is still right.
+		}
+		if (now - lastReload < UPDATE_RELOAD_COOLDOWN_MS) {
+			// index.html differs but reloading didn't help, so it probably
+			// varies per request. Stop, rather than reload in a loop.
+			console.warn("index.html keeps changing between requests, stopping update checks")
+			this.#updateCheckDisabled = true
+			return
+		}
+		try {
+			localStorage.setItem(UPDATE_RELOAD_KEY, now.toString())
+		} catch {
+			// Ignore, see above.
+		}
+		console.info("A new build is available, reloading")
+		window.location.reload()
 	}
 
 	#onMessage = (evt: MessageEvent<RawJSONCommand | WasmConnectionCommand>) => {

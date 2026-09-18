@@ -181,11 +181,17 @@ busy rooms with no message to sort or preview by, and any limited sync (which
 happens whenever a suspended tab resumes) trimmed the stored timeline down to
 it. The window is the same as the native build's.
 
-**"Failed to render ...: error loading dynamically imported module".** The
-page was open when a new build was deployed, and parts of the app that load
-on demand live in files whose names contain a build hash, which the deploy
-replaced. The page now reloads itself when this happens; if you see the
-message anyway, reload manually.
+**Picking up a new build.** A reload always fetches `index.html` fresh, so
+Ctrl+R or restarting the app gets the newest build; unchanged files still
+come from the browser cache, so it costs nothing when nothing changed.
+Without a reload, a tab that has been in the background compares the served
+`index.html` against the one it loaded with when it becomes visible again,
+and reloads if they differ. If a deploy happens while the page is open and a
+part of the app that loads on demand has gone missing, it reloads then too,
+rather than failing with "error loading dynamically imported module".
+
+Both checks work behind any static server, as long as `index.html` is served
+without long-lived caching.
 
 **A room sits in the wrong place in the room list on one device only.** The
 room list is restored from an IndexedDB cache on every load, and the backend
