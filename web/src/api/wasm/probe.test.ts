@@ -16,9 +16,10 @@
 import { expect, suite, test } from "vitest"
 import { computeWaveform } from "./probe.ts"
 
-// Three attempts at this were wrong in ways only visible in a sent message:
-// scaled against full scale it was a flat line of ones, scaled against the
-// loudest sample a single click at the end flattened everything else.
+// The values have to match what the server build produces with ffmpeg, so
+// these tests encode that algorithm rather than what looks best: the peak of
+// each bucket against full scale, averaged between the two halves of the
+// wave, then scaled up so the loudest bucket reaches the top.
 function synth(length: number, fill: (i: number) => number): Float32Array {
 	const samples = new Float32Array(length)
 	for (let i = 0; i < length; i++) {
@@ -33,32 +34,39 @@ suite("computeWaveform", () => {
 		expect(computeWaveform(synth(10_000, () => 0.5), 120)).toHaveLength(120)
 	})
 
-	test("quiet speech still uses most of the range", () => {
-		// Peaks at a fortieth of full scale, which scaled absolutely would be
-		// a row of sixes.
+	test("the loudest bucket reaches the top of the range", () => {
 		const waveform = computeWaveform(synth(10_000, i => Math.sin(i / 8) * 0.025), 40)
-		expect(Math.max(...waveform)).toBeGreaterThan(200)
+		expect(Math.max(...waveform)).toBe(256)
 	})
 
-	test("a click at the end does not flatten the rest", () => {
+	test("nothing is scaled down when a bucket is already at full scale", () => {
+		// A bucket at full scale means the recording is drawn at full height
+		// and the server build leaves the values alone.
 		const length = 10_000
 		const waveform = computeWaveform(
-			// Steady speech, then a single very loud bucket at the end.
 			synth(length, i => (i > length - 200 ? 1 : Math.sin(i / 8) * 0.05)),
 			40,
 		)
-		const body = waveform.slice(0, -1)
-		expect(Math.max(...body)).toBeGreaterThan(150)
 		expect(waveform.at(-1)).toBe(256)
+		expect(Math.max(...waveform.slice(0, -1))).toBeLessThan(40)
 	})
 
-	test("louder passages read higher than quieter ones", () => {
+	test("relative loudness is preserved", () => {
 		const length = 12_000
 		const waveform = computeWaveform(
 			synth(length, i => Math.sin(i / 8) * (i < length / 2 ? 0.02 : 0.2)),
 			40,
 		)
-		expect(waveform[5]).toBeLessThan(waveform[35])
+		// Ten times louder in the second half, and the loudest is at the top.
+		expect(waveform[35]).toBe(256)
+		expect(waveform[5]).toBeGreaterThan(15)
+		expect(waveform[5]).toBeLessThan(40)
+	})
+
+	test("both halves of the wave count", () => {
+		// Only positive excursions, so the average of up and down halves it.
+		const positive = computeWaveform(synth(10_000, i => (i % 2 === 0 ? 1 : 0)), 40)
+		expect(positive.every(value => value === 256)).toBe(true)
 	})
 
 	test("silence is all zeroes rather than a division by zero", () => {

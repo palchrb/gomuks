@@ -233,6 +233,14 @@ or percentage, the quality setting, sending as a plain file, and marking a
 recording as a voice message. The image work is shared with the server build
 (`gomuks.ReencodeImage`), since it is pure Go.
 
+The waveform is computed the same way the server build's ffmpeg filter does,
+deliberately including the part that looks wrong: each bucket is its peak
+against full scale, and the whole thing is then scaled up so the loudest
+bucket reaches the top. One loud transient, such as the click when a
+recording stops, therefore sets the scale for everything else. Matching that
+matters more than improving on it, so a voice message looks the same
+whichever gomuks sent it.
+
 The server build asks ffmpeg for the things it cannot read itself: how long an
 audio or video file is, how big the picture is, a frame to use as a thumbnail,
 and the waveform of a voice message. A browser already knows all of that, so

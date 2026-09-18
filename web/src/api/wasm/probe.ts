@@ -35,38 +35,50 @@ const THUMBNAIL_QUALITY = 0.8
 // A thumbnail this size is plenty for a timeline and keeps the upload small.
 const THUMBNAIL_MAX_EDGE = 800
 // What the server build asks ffmpeg for: one value per bucket, 0 to 256.
+// The value the server build passes to ffmpeg as the drawing height, and
+// therefore the top of the range.
 const WAVEFORM_MAX = 256
-// Buckets louder than this share of the recording are clipped to the top,
-// which keeps a click at either end from deciding the scale for everything.
-const WAVEFORM_PERCENTILE = 0.95
 const WAVEFORM_MIN_BUCKETS = 30
 const WAVEFORM_MAX_BUCKETS = 120
 
-// Everything but the buckets is scaled relative to how loud the recording
-// actually is, because speech peaks far below full scale and would otherwise
-// draw a flat line. The reference is a high percentile rather than the
-// loudest sample: stopping a recording usually leaves a click, and dividing
-// by that one spike flattens everything else again. Loudness per bucket is
-// the root mean square rather than the peak, for the same reason.
+// Mirrors what the server build gets from ffmpeg, so a voice message looks
+// the same whichever build sent it. See waveform.Generate in go.mau.fi/util:
+// ffmpeg draws the wave at linear scale into an image 256 pixels above and
+// below the centre, then each column is read as the average of how far the
+// wave reaches up and down, and finally the whole thing is scaled up so the
+// loudest column reaches the top.
+//
+// That last step means one loud transient, such as the click when a recording
+// stops, decides the scale for everything else. It looks odd, but it is what
+// the server build does, and matching it matters more than second-guessing
+// it: the alternative is voice messages that look different depending on
+// which gomuks sent them.
 export function computeWaveform(samples: Float32Array, buckets: number): number[] {
 	const perBucket = Math.max(Math.floor(samples.length / buckets), 1)
-	const loudness: number[] = []
+	const values: number[] = []
 	for (let i = 0; i < buckets; i++) {
 		const start = i * perBucket
 		const end = Math.min(start + perBucket, samples.length)
-		let sumOfSquares = 0
+		let up = 0
+		let down = 0
 		for (let j = start; j < end; j++) {
-			sumOfSquares += samples[j] * samples[j]
+			if (samples[j] > up) {
+				up = samples[j]
+			} else if (-samples[j] > down) {
+				down = -samples[j]
+			}
 		}
-		loudness.push(end > start ? Math.sqrt(sumOfSquares / (end - start)) : 0)
+		// The two halves of the drawn wave, in the same pixel units.
+		const upPixels = Math.min(Math.round(up * WAVEFORM_MAX), WAVEFORM_MAX)
+		const downPixels = Math.min(Math.round(down * WAVEFORM_MAX), WAVEFORM_MAX)
+		values.push(Math.floor((upPixels + downPixels) / 2))
 	}
-	const sorted = [...loudness].sort((a, b) => a - b)
-	const reference = sorted[Math.floor(sorted.length * WAVEFORM_PERCENTILE)] || sorted[sorted.length - 1]
-	if (!reference) {
-		return loudness.map(() => 0)
+	const loudest = Math.max(...values)
+	if (loudest <= 0 || loudest >= WAVEFORM_MAX) {
+		return values
 	}
-	return loudness.map(value =>
-		Math.max(Math.min(Math.round((value / reference) * WAVEFORM_MAX), WAVEFORM_MAX), 0))
+	return values.map(value =>
+		Math.max(Math.min(Math.trunc((value * WAVEFORM_MAX) / loudest), WAVEFORM_MAX), 0))
 }
 
 function waitForEvent(target: EventTarget, event: string, timeoutMS = 10_000): Promise<void> {
