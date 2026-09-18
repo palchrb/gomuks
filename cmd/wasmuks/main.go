@@ -47,6 +47,9 @@ import (
 
 var gmx *gomuks.Gomuks
 
+// Errors are posted as a plain string, the same as hicli and pkg/ffi send
+// them. Posting the structured error instead made the frontend's generic
+// handling show "[object Object]" and hide the real message.
 func postMessage(cmd jsoncmd.Name, reqID int64, data any) {
 	var dataJSON json.RawMessage
 	var ok bool
@@ -83,9 +86,7 @@ func recoverCommandPanic(action string, reqID int64) {
 		logEvt = logEvt.Any(zerolog.ErrorFieldName, err)
 	}
 	logEvt.Msg("Panic while handling command")
-	postMessage(jsoncmd.RespError, reqID, ptr.Ptr(gomuks.ToRespError(
-		fmt.Errorf("panic while handling %s: %v", action, err),
-	)))
+	postMessage(jsoncmd.RespError, reqID, fmt.Sprintf("panic while handling %s: %v", action, err))
 }
 
 func jsMessageListener(_ js.Value, args []js.Value) any {
@@ -103,9 +104,8 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 			uploadExtras
 		}
 		if err := json.Unmarshal(wrappedCmd.Data, &uploadParams); err != nil {
-			postMessage(jsoncmd.RespError, wrappedCmd.RequestID, ptr.Ptr(gomuks.ToRespError(
-				fmt.Errorf("failed to parse upload parameters: %w", err),
-			)))
+			postMessage(jsoncmd.RespError, wrappedCmd.RequestID,
+				fmt.Sprintf("failed to parse upload parameters: %v", err))
 			return nil
 		}
 		payloadVal := data.Get("payload")
@@ -123,7 +123,7 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 				ctx, uploadParams.UploadMediaParams, uploadParams.uploadExtras, payload, thumbnail,
 			)
 			if err != nil {
-				postMessage(jsoncmd.RespError, wrappedCmd.RequestID, ptr.Ptr(gomuks.ToRespError(err)))
+				postMessage(jsoncmd.RespError, wrappedCmd.RequestID, gomuks.ToRespError(err).Error())
 			} else {
 				postMessage(jsoncmd.RespSuccess, wrappedCmd.RequestID, resp)
 			}
@@ -140,7 +140,7 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 			ctx := gmx.Log.With().Stringer("action", wrappedCmd.Command).Logger().WithContext(context.Background())
 			resp, err := handler(ctx, wrappedCmd.Data)
 			if err != nil {
-				postMessage(jsoncmd.RespError, wrappedCmd.RequestID, ptr.Ptr(gomuks.ToRespError(err)))
+				postMessage(jsoncmd.RespError, wrappedCmd.RequestID, gomuks.ToRespError(err).Error())
 			} else {
 				postMessage(jsoncmd.RespSuccess, wrappedCmd.RequestID, resp)
 			}
@@ -155,7 +155,7 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 			ctx := gmx.Log.With().Str("action", "restore key backup").Logger().WithContext(context.Background())
 			resp, err := jsoncmd.RestoreKeyBackup.RunCtx(ctx, wrappedCmd.Data, restoreKeyBackup(wrappedCmd.RequestID))
 			if err != nil {
-				postMessage(jsoncmd.RespError, wrappedCmd.RequestID, ptr.Ptr(gomuks.ToRespError(err)))
+				postMessage(jsoncmd.RespError, wrappedCmd.RequestID, gomuks.ToRespError(err).Error())
 			} else {
 				postMessage(jsoncmd.RespSuccess, wrappedCmd.RequestID, resp)
 			}
