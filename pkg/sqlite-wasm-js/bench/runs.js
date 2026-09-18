@@ -64,6 +64,11 @@ const keys = [...new Set(results.flatMap(r => Object.keys(r)))]
 	.filter(key => key.includes("/"))
 	.sort()
 
+if (keys.length === 0) {
+	console.error("The runs produced no measurements. Check the variant names against the README.")
+	process.exit(1)
+}
+
 console.log(`\n${results.length} runs of ${rows} rows, milliseconds, lower is better`)
 console.log(`raw results written to ${rawFile}\n`)
 const pad = Math.max(...keys.map(k => k.length))
