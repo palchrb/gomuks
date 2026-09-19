@@ -225,6 +225,15 @@ rebuilt from the database:
 await client.store.deleteCache(); location.reload()
 ```
 
+**A room shows no message preview in the room list, while the server build
+shows one.** The same cache can store a room's preview event id without the
+event it points to: the event is only written along if it happens to be
+loaded in memory when the cache is flushed. Since a catchup sync only returns
+rooms that changed, a quiet room stayed without a preview until someone said
+something in it. The frontend now looks for those rooms once the first sync
+is done and fetches the missing events from the backend, so the preview
+appears on load. The `deleteCache` command above also clears it up.
+
 ## Media
 
 Uploads take the same options as the server build, so the upload dialog's

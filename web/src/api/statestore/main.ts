@@ -781,6 +781,47 @@ export class StateStore {
 		}
 	}
 
+	// The room list cache in IndexedDB may have a room whose preview event rowid is
+	// set, but whose preview event wasn't saved (getStateForCache only saves the event
+	// if it's loaded in memory). Catchup syncs only include rooms that changed, so a
+	// quiet room would be left without a preview until something happens in it.
+	findRoomsWithMissingPreview(): RoomStateStore[] {
+		const rooms: RoomStateStore[] = []
+		for (const entry of this.roomList.current) {
+			const room = this.rooms.get(entry.room_id)
+			const rowID = room?.meta.current.preview_event_rowid
+			if (room && rowID && room.preferences.room_list_preview && !room.eventsByRowID.has(rowID)) {
+				rooms.push(room)
+			}
+		}
+		return rooms
+	}
+
+	// Refresh the room list previews of the given rooms after their preview events
+	// have been added to the room state stores. Sorting is unaffected, so this only
+	// replaces the entries in place.
+	updateRoomListPreviews(roomIDs: RoomID[]) {
+		const updatedRoomList = [...this.roomList.current]
+		let changed = false
+		for (const roomID of roomIDs) {
+			const room = this.rooms.get(roomID)
+			if (!room || !room.preferences.room_list_preview) {
+				continue
+			}
+			const previewEvent = room.eventsByRowID.get(room.meta.current.preview_event_rowid)
+			const idx = updatedRoomList.findIndex(entry => entry.room_id === roomID)
+			if (!previewEvent || idx === -1) {
+				continue
+			}
+			updatedRoomList[idx] = { ...updatedRoomList[idx], preview_event: previewEvent }
+			this.stateCache?.setRoom(room.getStateForCache())
+			changed = true
+		}
+		if (changed) {
+			this.roomList.emit(updatedRoomList)
+		}
+	}
+
 	applyTyping(typing: TypingEventData) {
 		const room = this.rooms.get(typing.room_id)
 		if (!room) {

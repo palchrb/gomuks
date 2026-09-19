@@ -389,6 +389,9 @@ export default class Client {
 		} else if (ev.command === "init_complete") {
 			this.initComplete.emit(true)
 			this.store.stateCache?.tryFlush()
+			if (this.#shouldLoadCache()) {
+				this.#fetchMissingPreviews()
+			}
 		} else if (ev.command === "sync_complete") {
 			this.store.applySync(ev.data)
 		} else if (ev.command === "events_decrypted") {
@@ -400,6 +403,34 @@ export default class Client {
 		} else if (ev.command === "typing") {
 			this.store.applyTyping(ev.data)
 		}
+	}
+
+	// Rooms restored from the IndexedDB cache can have a preview event rowid without
+	// the event itself. Fetch those events from the backend so the room list preview
+	// doesn't stay empty until the next message in the room.
+	#fetchMissingPreviews() {
+		const rooms = this.store.findRoomsWithMissingPreview()
+		if (!rooms.length) {
+			return
+		}
+		console.log("Fetching missing room list previews for", rooms.length, "rooms")
+		Promise.all(rooms.map(room => {
+			const rowID = room.meta.current.preview_event_rowid
+			if (room.requestedEventRowIDs.has(rowID)) {
+				return null
+			}
+			room.requestedEventRowIDs.add(rowID)
+			return this.rpc.getEventByRowID(rowID).then(
+				evt => {
+					room.applyEvent(evt, false)
+					return room.roomID
+				},
+				err => {
+					console.warn(`Failed to fetch preview event ${rowID} for ${room.roomID}`, err)
+					return null
+				},
+			)
+		})).then(roomIDs => this.store.updateRoomListPreviews(roomIDs.filter(id => id !== null)))
 	}
 
 	requestMemberEvent(room: RoomStateStore | RoomID | undefined, userID: UserID) {
