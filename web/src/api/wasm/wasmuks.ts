@@ -215,13 +215,23 @@ async function loadPickleKey(): Promise<Uint8Array> {
 
 ;(async () => {
 	const go = new Go()
+	// The Go module is 30 MB, which is far more to download and compile than
+	// anything else here, so start it first and let the SQLite module and the
+	// OPFS pool set themselves up while the browser is still working on it.
+	// Nothing below touches the instance before both are done.
+	const compileStart = performance.now()
+	const gomuksWasm = initGomuksWasm(go.importObject)
+	// The await is further down, so attach a handler now: without one, a
+	// failure while storage is still initializing would be an unhandled
+	// rejection. The error is still delivered by the await.
+	void gomuksWasm.catch(() => {})
 	await initSqlite()
 	self.wasmuksPickleKey = await loadPickleKey()
-	const compileStart = performance.now()
-	const instance = await initGomuksWasm(go.importObject)
+	const instance = await gomuksWasm
 	const memory = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory
 	console.info(
-		`wasm compile+instantiate: ${(performance.now() - compileStart).toFixed(0)} ms`,
+		`wasm ready after ${(performance.now() - compileStart).toFixed(0)} ms`,
+		"(download, compile and instantiate, overlapping the storage setup)",
 		memory ? `(worker JS heap ${(memory.usedJSHeapSize / 1048576).toFixed(0)} MB)` : "",
 	)
 	await setupMediaChannel()
