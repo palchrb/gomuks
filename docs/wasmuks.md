@@ -111,7 +111,6 @@ The same file can tune the wasm backend in a `wasm` section (see
 
 | Key | Default | Meaning |
 |---|---|---|
-| `single_connection` | `true` | One SQLite connection with EXCLUSIVE locking (fastest per query, but reads wait for running write transactions) or five connections with normal locking. Compare on your own account. |
 | `memory_limit_mb` | `512` | Soft limit for the Go heap in the worker. The garbage collector works harder near it. |
 | `gc_ballast_mb` | `64` | Untouched allocation that keeps the GC's target up. The live heap is tiny between syncs, so without it every few MB of allocation triggered a full collection on the single thread. `0` disables it. |
 | `log_level` | `debug` | Backend log level in the browser console (`trace`, `debug`, `info`, `warn`, `error`). `debug` logs every decrypted event; `info` keeps only the resource and timing lines below. |
@@ -174,10 +173,6 @@ For the browser's own view, use Chrome's Task Manager (Shift+Esc): the
 renderer row for the tab includes V8's compiled code and the frontend. Note
 it right after the initial sync and again after ten minutes of use: a number
 that keeps climbing points to a leak, one that flattens is the platform cost.
-
-To compare database modes on your own account, set
-`"wasm": {"single_connection": false}` in `config.json`, reload, and compare
-`Slow command` lines and how quickly rooms open.
 
 ## Troubleshooting
 

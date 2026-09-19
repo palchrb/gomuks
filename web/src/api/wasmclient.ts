@@ -35,7 +35,6 @@ export interface StorageStatus {
 export interface WasmuksInit {
 	last_server_ts: number
 	// From the "wasm" section of config.json, see docs/wasmuks.md.
-	single_connection?: boolean
 	memory_limit_mb?: number
 	gc_ballast_mb?: number
 	// zerolog level name: trace, debug, info, warn, error. Default debug.
@@ -51,9 +50,6 @@ async function loadWasmConfig(): Promise<Partial<WasmuksInit>> {
 		return {}
 	}
 	const out: Partial<WasmuksInit> = {}
-	if (typeof wasm.single_connection === "boolean") {
-		out.single_connection = wasm.single_connection
-	}
 	if (typeof wasm.memory_limit_mb === "number" && wasm.memory_limit_mb > 0) {
 		out.memory_limit_mb = Math.floor(wasm.memory_limit_mb)
 	}

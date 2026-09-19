@@ -257,10 +257,9 @@ func runMigrations() error {
 type wasmuksInit struct {
 	LastServerTS int64 `json:"last_server_ts"`
 	// From the "wasm" section of config.json, see docs/wasmuks.md.
-	SingleConnection *bool  `json:"single_connection,omitempty"`
-	MemoryLimitMB    int    `json:"memory_limit_mb,omitempty"`
-	GCBallastMB      *int   `json:"gc_ballast_mb,omitempty"`
-	LogLevel         string `json:"log_level,omitempty"`
+	MemoryLimitMB int    `json:"memory_limit_mb,omitempty"`
+	GCBallastMB   *int   `json:"gc_ballast_mb,omitempty"`
+	LogLevel      string `json:"log_level,omitempty"`
 }
 
 const (
@@ -278,10 +277,6 @@ var gcBallast []byte
 var initParams wasmuksInit
 
 var processStart = time.Now()
-
-func singleConnection() bool {
-	return initParams.SingleConnection == nil || *initParams.SingleConnection
-}
 
 // logMemStats periodically logs Go heap statistics so memory use is visible
 // in the browser console without a profiler.
@@ -386,24 +381,16 @@ func main() {
 			gmx.Config.Logging.MinLevel = ptr.Ptr(level)
 		}
 	}
-	// The driver defaults to EXCLUSIVE locking + PERSIST journal on OPFS,
-	// which requires that only one connection uses the file (see
-	// pkg/sqlite-wasm-js/conn.go). That's fastest per query, but every read
-	// waits for in-progress write transactions. config.json can switch to a
-	// multi-connection pool with normal locking for comparison.
+	// One connection with the driver's defaults, EXCLUSIVE locking and a
+	// PERSIST journal (see pkg/sqlite-wasm-js/conn.go). Holding the file lock
+	// for the session is what brings point lookups on OPFS down to in-memory
+	// speed, measured in pkg/sqlite-wasm-js/bench; a multi-connection pool
+	// with normal locking was an order of magnitude slower on them.
 	gmx.GetDBConfig = func() dbutil.PoolConfig {
-		if singleConnection() {
-			return dbutil.PoolConfig{
-				Type:         "sqlite-wasm-js",
-				URI:          "file:/gomuks.db?_txlock=immediate",
-				MaxOpenConns: 1,
-				MaxIdleConns: 1,
-			}
-		}
 		return dbutil.PoolConfig{
 			Type:         "sqlite-wasm-js",
-			URI:          "file:/gomuks.db?_txlock=immediate&_locking_mode=NORMAL&_journal_mode=DELETE",
-			MaxOpenConns: 5,
+			URI:          "file:/gomuks.db?_txlock=immediate",
+			MaxOpenConns: 1,
 			MaxIdleConns: 1,
 		}
 	}
@@ -456,9 +443,8 @@ func main() {
 		postMessage("wasm-connection", 0, json.RawMessage(`{"connected":false,"reconnecting":false,"error":"Database migration failed"}`))
 		return
 	}
-	gmx.Client.SingleConnectionDB = singleConnection()
+	gmx.Client.SingleConnectionDB = true
 	gmx.Log.Info().
-		Bool("single_connection", gmx.Client.SingleConnectionDB).
 		Int("memory_limit_mb", memoryLimitMB).
 		Int("gc_ballast_mb", ballastMB).
 		Msg("wasm configuration")

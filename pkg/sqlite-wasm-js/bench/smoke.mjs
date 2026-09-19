@@ -18,7 +18,7 @@ const types = {
 }
 export const configJSON = {
 	preferences: { show_membership_events: false, bogus_key: 1, display_read_receipts: "no" },
-	wasm: { memory_limit_mb: 256, initial_timeline_limit: 10, single_connection: true },
+	wasm: { memory_limit_mb: 256, initial_timeline_limit: 10 },
 }
 
 const noConfig = Boolean(process.env.SMOKE_NO_CONFIG)

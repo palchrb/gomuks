@@ -4,7 +4,6 @@
 		"show_hidden_events": false
 	},
 	"wasm": {
-		"single_connection": true,
 		"memory_limit_mb": 512,
 		"gc_ballast_mb": 64,
 		"log_level": "info"
