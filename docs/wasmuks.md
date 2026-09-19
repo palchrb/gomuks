@@ -349,6 +349,20 @@ not the order things happen in:
   the obvious next step and breaks the load; see the note under recommended
   headers above, and the comment on `loadIndex` in `cmd/wasmukserve/main.go`.
 
+Brotli costs nothing on a fast connection: unthrottled, the same measurement
+is around 900 ms whether the file is served raw, gzipped or brotli'd, so the
+decode doesn't show up. Note that browsers only offer `br` on a secure
+origin, so a deployment reached over plain HTTP (other than localhost) will
+be served the gzip sidecar instead.
+
+Linking the wasm with `-s -w` is not worth it. It saves 0.6 MB uncompressed
+but only 120 KB after brotli, and what it removes is the wasm name section,
+which is what the browser labels wasm frames with: without it the devtools
+profiler and any JavaScript-side stack trace show `wasm-function[1234]`
+instead of a function name. Go's own panic tracebacks are unaffected either
+way, since those come from the pclntab, which stays. Go's wasm output has no
+DWARF to begin with, so `-w` does nothing at all.
+
 What is left is the file itself. Making it smaller by dropping features is
 the only remaining lever, and it is a poor one: the largest single thing in
 there is chroma's syntax highlighting, and removing it saves 3.4 MB
