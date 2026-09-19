@@ -92,7 +92,11 @@ func uploadMedia(
 		// does for the server build. Browsers record Opus already, so the
 		// request is satisfied by moving the packets into an Ogg container
 		// rather than by transcoding.
-		if ogg, remuxErr := oggopus.Remux(payload); remuxErr != nil {
+		if bytes.HasPrefix(payload, []byte("OggS")) {
+			// Firefox records Opus in Ogg directly, which is what was asked
+			// for, so there is nothing to do.
+			log.Debug().Msg("Recording is already in an ogg container")
+		} else if ogg, remuxErr := oggopus.Remux(payload); remuxErr != nil {
 			log.Debug().Err(remuxErr).Msg("Not repackaging as ogg, sending as recorded")
 		} else {
 			log.Debug().
@@ -123,8 +127,8 @@ func uploadMedia(
 		FileName: fileName,
 	}
 	if remuxedToOgg {
-		// Stated plainly rather than left to content sniffing, which reports
-		// Opus in Ogg as audio/opus.
+		// Sniffing the remuxed bytes would say the same thing, but there is no
+		// reason to guess at the output of our own remuxer.
 		info.MimeType = "audio/ogg"
 		content.MsgType = event.MsgAudio
 	}
