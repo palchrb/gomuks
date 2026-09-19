@@ -89,16 +89,28 @@ div.sync-bar {
 	right: 0;
 	bottom: 0;
 	z-index: 10;
-	padding: .2rem .5rem calc(.2rem + var(--window-bottom-margin));
+	/* The safe area at the bottom is part of the bar rather than padding under
+	   it, so the text is centred in what you see instead of sitting above the
+	   home indicator's worth of empty space. */
+	height: calc(1.25rem + var(--window-bottom-margin));
+	padding: 0 .5rem;
 	display: flex;
 	justify-content: center;
 	align-items: center;
 	gap: .5rem;
 	font-size: var(--small-font-size);
-	line-height: 1.2rem;
+	line-height: 1;
 	background-color: var(--background-color);
 	border-top: 2px solid var(--primary-color);
 	pointer-events: none;
+
+	/* The spinner's dots are inline-block and sit on the text baseline, which
+	   both adds height and pushes the text off centre. */
+	> span {
+		display: flex;
+		align-items: center;
+		line-height: 0;
+	}
 
 	&.disconnected {
 		border-top-color: var(--error-color);

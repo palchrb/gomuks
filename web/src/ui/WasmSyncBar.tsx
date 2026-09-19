@@ -22,10 +22,15 @@ import ClientContext from "./ClientContext.ts"
 
 // In the wasm build the backend runs in the tab and all data is local, so a
 // failing sync never blocks anything: it only means new messages are late.
-// Backgrounding the PWA also fails the in-flight /sync once on resume.
-// So: say nothing for a moment, then a thin line at the bottom, and only
-// after a while call it disconnected.
+// So: a thin line at the bottom, and only after a while call it disconnected.
+//
+// A failure that starts while the tab is already in front gets a quiet moment
+// first, so a single hiccup mid-session doesn't flash a line. Right after the
+// tab is brought forward is the opposite case: backgrounding the PWA fails the
+// in-flight /sync, and that is exactly when saying "reconnecting" is useful,
+// because the user is looking at the room list waiting for it to catch up.
 const GRACE_MS = 5_000
+const RESUME_MS = 15_000
 const DISCONNECTED_MS = 30_000
 
 interface WasmSyncBarProps {
@@ -68,7 +73,8 @@ const WasmSyncBar = ({ rpc, syncStatus }: WasmSyncBarProps): JSX.Element | null 
 	}
 	const since = Math.max(syncStatus.last_sync ?? 0, lastResumedAt)
 	const elapsed = Date.now() - since
-	if (elapsed < GRACE_MS) {
+	const justResumed = Date.now() - lastResumedAt < RESUME_MS
+	if (elapsed < GRACE_MS && !justResumed) {
 		return null
 	} else if (elapsed < DISCONNECTED_MS) {
 		return <div className="sync-bar reconnecting" title={syncStatus.error}>
