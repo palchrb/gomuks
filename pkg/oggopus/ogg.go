@@ -29,8 +29,6 @@ const (
 	headerTypeEOS       = 0x04
 	// A page carries at most 255 segments of at most 255 bytes.
 	maxSegmentsPerPage = 255
-	// Opus always decodes to 48 kHz for the purposes of granule positions.
-	opusSampleRate = 48000
 )
 
 // Ogg uses CRC-32 with the same polynomial as Ethernet but without the usual
