@@ -40,6 +40,8 @@ const THUMBNAIL_MAX_EDGE = 800
 const WAVEFORM_MAX = 256
 const WAVEFORM_MIN_BUCKETS = 30
 const WAVEFORM_MAX_BUCKETS = 120
+// What the server build uses when it doesn't know the duration.
+const WAVEFORM_DEFAULT_BUCKETS = 80
 
 // Mirrors what the server build gets from ffmpeg, so a voice message looks
 // the same whichever build sent it. See waveform.Generate in go.mau.fi/util:
@@ -157,10 +159,12 @@ async function probeAudio(file: Blob, wantWaveform: boolean): Promise<MediaProbe
 			return probe
 		}
 		// Same bucket count the server build derives from the duration.
-		const buckets = Math.min(
-			Math.max(Math.floor((probe.duration_ms ?? 0) / 125), WAVEFORM_MIN_BUCKETS),
-			WAVEFORM_MAX_BUCKETS,
-		)
+		const buckets = probe.duration_ms
+			? Math.min(
+				Math.max(Math.floor(probe.duration_ms / 125), WAVEFORM_MIN_BUCKETS),
+				WAVEFORM_MAX_BUCKETS,
+			)
+			: WAVEFORM_DEFAULT_BUCKETS
 		probe.waveform = computeWaveform(decoded.getChannelData(0), buckets)
 		return probe
 	} finally {
