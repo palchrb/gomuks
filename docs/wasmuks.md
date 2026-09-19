@@ -117,9 +117,7 @@ The same file can tune the wasm backend in a `wasm` section (see
 | `log_level` | `debug` | Backend log level in the browser console (`trace`, `debug`, `info`, `warn`, `error`). `debug` logs every decrypted event; `info` keeps only the resource and timing lines below. |
 
 The backend logs the effective values ("wasm configuration") and heap
-statistics every 30 seconds in the browser console, and commands that take
-longer than 200 ms ("Slow command"), so slowness can be measured rather than
-guessed.
+statistics every 30 seconds in the browser console.
 
 ## Client requirements
 
@@ -162,7 +160,7 @@ history.
 Everything is logged to the browser console. The default level is `debug`,
 which is very chatty (every decrypted event); set `"log_level": "info"` in
 `config.json` to keep only the lines below, or type this in the console's
-filter box: `/Memory stats|wasm compile|wasm configuration|Initial room list|Slow command|Slow sync|Key backup restore|Storage persistence/`.
+filter box: `/Memory stats|wasm compile|wasm configuration|Initial room list|Storage persistence/`.
 Open DevTools before loading the page and look for:
 
 | Line | Meaning |
@@ -171,9 +169,6 @@ Open DevTools before loading the page and look for:
 | `wasm configuration` | Effective `config.json` values (connections, memory limit, timeline limit). |
 | `Initial room list sent` | Time from Go start to the room list, number of rooms, and heap size right after the initial sync. |
 | `Memory stats` | Go heap every 30 seconds (`heap_alloc_mb` is live data, `heap_sys_mb` is what wasm memory has grown to and never shrinks). |
-| `Slow command` / `Slow sync processing` | Any frontend request over 200 ms or sync batch over 500 ms, with its duration. |
-| `Slow pagination` | History loads over 500 ms, split into `fetch` (homeserver), `lock_wait` and `process` (decrypt + database). |
-| `Key backup restore finished` | Sessions restored and how long saving took. |
 
 For the browser's own view, use Chrome's Task Manager (Shift+Esc): the
 renderer row for the tab includes V8's compiled code and the frontend. Note

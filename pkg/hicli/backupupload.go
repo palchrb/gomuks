@@ -211,13 +211,6 @@ func (h *HiClient) RestoreKeyBackup(
 	log.Debug().Any("progress", progress).Msg("Finished decrypting key backup, storing entries")
 	progress.Stage = "saving"
 	progressCallback(progress)
-	saveStart := time.Now()
-	defer func() {
-		log.WithLevel(SlowOperationLogLevel).
-			Dur("save_duration", time.Since(saveStart)).
-			Int("sessions", len(entries)).
-			Msg("Key backup restore finished")
-	}()
 	for chunk := range slices.Chunk(entries, persistChunkSize) {
 		persistChunk := func(ctx context.Context) error {
 			for _, entry := range chunk {

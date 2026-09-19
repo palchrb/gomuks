@@ -362,8 +362,6 @@ func removeData(ctx context.Context, _ *hicli.HiClient) error {
 
 func main() {
 	hicli.InitialDeviceDisplayName = "gomuks web"
-	// Timing lines are the main diagnostic in a browser, so keep them visible.
-	hicli.SlowOperationLogLevel = zerolog.InfoLevel
 	gmx = gomuks.NewGomuks()
 	gmx.Config = gomuks.Config{
 		Logging: zeroconfig.Config{
