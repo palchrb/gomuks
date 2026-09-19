@@ -47,15 +47,20 @@ Build the frontend as above, optionally pre-compress it, and build the server
 binary, which embeds `web/dist/`:
 
 ```sh
-cd web && find dist -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.svg' \) -exec gzip -9 -k {} + && cd ..
+cd web/dist
+find . -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.svg' \) -exec gzip -9 -k {} +
+find . -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.svg' \) -exec brotli -q 11 -k {} +
+cd ../..
 go build -o wasmukserve ./cmd/wasmukserve
 ./wasmukserve -listen 127.0.0.1:8181 -config config.json
 ```
 
-`wasmukserve` serves the pre-compressed files to clients that accept gzip,
-sets the cache headers below, and serves `config.json` from the given path
-so it can be edited without rebuilding. `-dir` serves a directory instead of
-the embedded files.
+`wasmukserve` serves the pre-compressed files, preferring brotli and falling
+back to gzip, sets the cache headers below, and serves `config.json` from the
+given path so it can be edited without rebuilding. `-dir` serves a directory
+instead of the embedded files. Brotli is worth the minute it takes to
+compress: 4.9 MB against 7.1 MB for the wasm binary, and that download is
+most of a cold start.
 
 Any other static file server works too: serve `web/dist/` as static files. The wasm mode is enabled
 automatically when the files are served statically (the Go server injects a
@@ -66,8 +71,15 @@ Recommended headers:
 * `index.html`, `config.json`, `wasmuks-media-sw.js`: `Cache-Control: no-cache`
 * everything under `assets/`: `Cache-Control: public, max-age=31536000, immutable`
   (file names are content-hashed)
-* enable brotli or gzip; the wasm binary is ~30 MB uncompressed, ~7 MB gzipped,
-  and browsers cache the compiled module after the first load
+* enable brotli, or gzip if that is all the server has: the wasm binary is
+  ~30 MB uncompressed, ~7 MB gzipped and ~4.9 MB with brotli, and it is
+  fetched again after every deployment because its name is content-hashed
+* do not add a `<link rel="preload">` or `rel="prefetch"` for the wasm binary.
+  It is tempting, because the worker that fetches it starts late, but the
+  frontend compiles it from the response stream: the hint downloads the file
+  and the worker's own request then attaches to that response and fails with
+  "WebAssembly compilation aborted". Measured in `startup.mjs`: two downloads
+  on a fast connection, and on a throttled one the backend never starts at all
 
 Cross-origin isolation headers (COOP/COEP) are not required: the OPFS
 SAH pool VFS doesn't use SharedArrayBuffer, and `Cross-Origin-Embedder-Policy:
@@ -307,6 +319,42 @@ its storage layer load, the 30 MB Go program is fetched and compiled, schema
 migrations run, and then the account and crypto store load before the first
 sync. The file itself is cached by the browser, since its name contains a
 build hash and it is served as immutable.
+
+`pkg/sqlite-wasm-js/bench/startup.mjs` measures this in a cold browser and
+prints the phases. At 10 Mbit with a 60 ms round trip, which is roughly a
+phone on mobile data, a first load with gzip looks like this:
+
+| | |
+|---|---|
+| frontend loaded, worker started, pickle key read | 1.5 s |
+| Go module downloaded, compiled and instantiated | 6.9 s |
+| database opened, migrations, crypto store | 7.5 s |
+
+So the download is about 85% of it, and it is the bandwidth that decides,
+not the order things happen in:
+
+* **Compress it properly.** Brotli takes the download from 7.1 MB to 4.9 MB,
+  which is around 1.9 s of that 6.3 s at this speed.
+* **Starting it earlier barely helps.** The download used to begin only after
+  SQLite and the OPFS pool were set up, because the worker awaited those
+  first; it now runs alongside them. That measured 7.52 s against 7.66 s,
+  which is inside the spread of the runs. The reason is that the cold start at
+  a given bandwidth is close to total bytes divided by bandwidth: fetching the
+  module earlier only makes it share the connection with the rest of the
+  frontend, and it finishes at the same time. The change is kept because it
+  removes a serialisation that has no reason to be there, and because a
+  browser reading the file from its cache is not bandwidth bound, but it is
+  not where the time goes.
+* **Don't try to start it from the page.** A `<link rel="preload">` looks like
+  the obvious next step and breaks the load; see the note under recommended
+  headers above, and the comment on `loadIndex` in `cmd/wasmukserve/main.go`.
+
+What is left is the file itself. Making it smaller by dropping features is
+the only remaining lever, and it is a poor one: the largest single thing in
+there is chroma's syntax highlighting, and removing it saves 3.4 MB
+uncompressed but only 0.5 MB after brotli, because it is mostly XML. The
+same goes for the rest: 16.4 MiB of the binary is code, spread thin over
+13000 functions, with the Go runtime the largest single entry at 811 KiB.
 
 Whether the *compiled* code is reused is up to the engine, and the only way
 to get it is the implicit cache. Chrome writes compiled WebAssembly to disk

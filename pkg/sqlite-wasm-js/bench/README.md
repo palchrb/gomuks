@@ -168,3 +168,32 @@ applied, and a second tab is refused by the Web Lock:
 cd web && ./build-wasm.sh && npm run build && cd ../pkg/sqlite-wasm-js/bench
 CHROMIUM_PATH=/path/to/chrome node smoke.mjs
 ```
+
+## Cold-start timing
+
+`startup.mjs` serves a built `web/dist` and times a cold load: a fresh
+browser each run, so neither the HTTP cache nor Chromium's compiled-code
+cache carries anything over. It prints the phases on the way to a started
+backend and counts how many times the wasm binary is fetched.
+
+```sh
+cd web && npm run build && cd dist \
+	&& find . -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.css' -o -name '*.html' \) -exec gzip -9 -k {} +
+cd ../../pkg/sqlite-wasm-js/bench
+node startup.mjs 3                    # as fast as the local disk
+THROTTLE_MBPS=10 node startup.mjs 3   # roughly a phone on mobile data
+```
+
+Throttle it. Unthrottled, the 30 MB download is nearly free and the
+measurement says nothing about the load a phone sees; at 10 Mbit the download
+is around 85% of the time to a started backend. Compress the dist first if
+the download is part of what you're measuring, because the server here serves
+the sidecars when they exist, like `wasmukserve` does.
+
+The useful thing this measures is bytes. At a given bandwidth the cold start
+is close to total bytes divided by bandwidth, so compressing better moves it
+and reordering the startup does not. `--hint preload` and `--hint prefetch`
+add a `<link>` for the wasm binary to `index.html`, which looks like it
+should help and instead fetches the file twice, or, throttled, leaves the
+worker's streaming compile attached to an aborted response so the backend
+never starts at all.
