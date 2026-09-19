@@ -13,6 +13,7 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import getConfigJSON from "@/api/configjson.ts"
 import { getAvatarThumbnailURL } from "@/api/media.ts"
 import {
 	PreferenceValueType, Preferences, getLocalStoragePreferences, getPreferenceProxy, isValidPreferenceKey, preferences,
@@ -207,17 +208,7 @@ export class StateStore {
 	}
 
 	async loadConfigPreferences() {
-		let resp: Response
-		try {
-			resp = await fetch("config.json", { cache: "no-cache" })
-		} catch {
-			return
-		}
-		if (!resp.ok) {
-			return
-		}
-		const config = await resp.json() as { preferences?: Record<string, unknown> }
-		const configPrefs = config?.preferences
+		const configPrefs = (await getConfigJSON()).preferences
 		if (!configPrefs || typeof configPrefs !== "object") {
 			return
 		}

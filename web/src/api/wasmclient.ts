@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import { CachedEventDispatcher, NonNullCachedEventDispatcher } from "@/util/eventdispatcher.ts"
+import getConfigJSON from "./configjson.ts"
 import RPCClient, { ConnectionEvent } from "./rpc.ts"
 import type {
 	BaseRPCCommand, MediaEncodingOptions, MediaMessageEventContent, RPCCommand,
@@ -45,45 +46,35 @@ export interface WasmuksInit {
 // the same file are handled by the state store; this only picks up the
 // backend tuning knobs, validated by type.
 async function loadWasmConfig(): Promise<Partial<WasmuksInit>> {
-	try {
-		const resp = await fetch("config.json", { cache: "no-cache" })
-		if (!resp.ok) {
-			return {}
-		}
-		const config = await resp.json() as { wasm?: Record<string, unknown> }
-		const wasm = config?.wasm
-		if (!wasm || typeof wasm !== "object") {
-			return {}
-		}
-		const out: Partial<WasmuksInit> = {}
-		if (typeof wasm.single_connection === "boolean") {
-			out.single_connection = wasm.single_connection
-		}
-		if (typeof wasm.memory_limit_mb === "number" && wasm.memory_limit_mb > 0) {
-			out.memory_limit_mb = Math.floor(wasm.memory_limit_mb)
-		}
-		if (typeof wasm.gc_ballast_mb === "number" && wasm.gc_ballast_mb >= 0) {
-			out.gc_ballast_mb = Math.floor(wasm.gc_ballast_mb)
-		}
-		if (wasm.initial_timeline_limit !== undefined) {
-			// Removed: the sync filter it fed is used for every sync, not just
-			// the first, so a small window left busy rooms with no message to
-			// sort or preview by, and any limited sync trimmed the stored
-			// timeline down to it.
-			console.warn("Ignoring initial_timeline_limit from config.json, it is no longer configurable")
-		}
-		const logLevels = ["trace", "debug", "info", "warn", "error"]
-		if (typeof wasm.log_level === "string" && logLevels.includes(wasm.log_level)) {
-			out.log_level = wasm.log_level
-		}
-		if (Object.keys(out).length) {
-			console.info("Loaded wasm config:", out)
-		}
-		return out
-	} catch (err) {
-		console.warn("Failed to load config.json wasm section", err)
+	const wasm = (await getConfigJSON()).wasm
+	if (!wasm || typeof wasm !== "object") {
 		return {}
 	}
+	const out: Partial<WasmuksInit> = {}
+	if (typeof wasm.single_connection === "boolean") {
+		out.single_connection = wasm.single_connection
+	}
+	if (typeof wasm.memory_limit_mb === "number" && wasm.memory_limit_mb > 0) {
+		out.memory_limit_mb = Math.floor(wasm.memory_limit_mb)
+	}
+	if (typeof wasm.gc_ballast_mb === "number" && wasm.gc_ballast_mb >= 0) {
+		out.gc_ballast_mb = Math.floor(wasm.gc_ballast_mb)
+	}
+	if (wasm.initial_timeline_limit !== undefined) {
+		// Removed: the sync filter it fed is used for every sync, not just
+		// the first, so a small window left busy rooms with no message to
+		// sort or preview by, and any limited sync trimmed the stored
+		// timeline down to it.
+		console.warn("Ignoring initial_timeline_limit from config.json, it is no longer configurable")
+	}
+	const logLevels = ["trace", "debug", "info", "warn", "error"]
+	if (typeof wasm.log_level === "string" && logLevels.includes(wasm.log_level)) {
+		out.log_level = wasm.log_level
+	}
+	if (Object.keys(out).length) {
+		console.info("Loaded wasm config:", out)
+	}
+	return out
 }
 
 const LOCK_NAME = "gomuks-wasm"
