@@ -85,7 +85,10 @@ div.sync-status {
 /* wasm build: sync state as a thin line at the bottom that never covers content */
 div.sync-bar {
 	position: fixed;
-	left: 0;
+	/* The space rail is 3rem wide (the grid in RoomList.css), and the cell
+	   below it is the profile row, so a bar across the whole window cuts the
+	   avatar in half. Start after the rail instead. */
+	left: 3rem;
 	right: 0;
 	bottom: 0;
 	z-index: 10;
@@ -121,5 +124,14 @@ div.sync-bar {
 	&.offline {
 		border-top-color: var(--border-color);
 		color: var(--secondary-text-color);
+	}
+}
+
+/* One pane at a time: with a room open the room list and its rail are off
+   screen, so there is nothing on the left to leave room for. The bar is a
+   sibling of main, hence :has rather than a descendant selector. */
+@media screen and (max-width: 45rem) {
+	body:has(main.matrix-main.room-selected) div.sync-bar {
+		left: 0;
 	}
 }
