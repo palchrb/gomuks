@@ -16,6 +16,7 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -78,5 +79,41 @@ func TestSPAFallback(t *testing.T) {
 	}
 	if got := resp.Header.Get("Content-Type"); got != "text/html; charset=utf-8" {
 		t.Errorf("Content-Type is %q, want html", got)
+	}
+}
+
+// Both sidecars are built; brotli saves about 30% over gzip on the wasm
+// binary, so it has to win when the client takes either.
+func TestPrecompressedSidecars(t *testing.T) {
+	files := fstest.MapFS{
+		"index.html":                 {Data: []byte("<html></html>")},
+		"assets/_gomuks-abc.wasm":    {Data: []byte("\x00asm")},
+		"assets/_gomuks-abc.wasm.gz": {Data: []byte("gzipped")},
+		"assets/_gomuks-abc.wasm.br": {Data: []byte("brotlid")},
+		"assets/only-gz.js":          {Data: []byte("plain")},
+		"assets/only-gz.js.gz":       {Data: []byte("gzipped")},
+	}
+	for _, test := range []struct{ target, accept, encoding, body string }{
+		{"/assets/_gomuks-abc.wasm", "br, gzip", "br", "brotlid"},
+		{"/assets/_gomuks-abc.wasm", "gzip, deflate, br", "br", "brotlid"},
+		{"/assets/_gomuks-abc.wasm", "gzip", "gzip", "gzipped"},
+		{"/assets/_gomuks-abc.wasm", "", "", "\x00asm"},
+		// Brotli accepted but not built for this file: fall back to gzip.
+		{"/assets/only-gz.js", "br, gzip", "gzip", "gzipped"},
+		// A name that merely starts with the token must not match.
+		{"/assets/_gomuks-abc.wasm", "brotli", "", "\x00asm"},
+	} {
+		resp := serve(t, files, test.target, http.Header{"Accept-Encoding": {test.accept}})
+		if got := resp.Header.Get("Content-Encoding"); got != test.encoding {
+			t.Errorf("%s with %q: Content-Encoding is %q, want %q",
+				test.target, test.accept, got, test.encoding)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if string(body) != test.body {
+			t.Errorf("%s with %q: body is %q, want %q", test.target, test.accept, body, test.body)
+		}
+		if test.encoding != "" && resp.Header.Get("Vary") != "Accept-Encoding" {
+			t.Errorf("%s with %q: Vary is %q", test.target, test.accept, resp.Header.Get("Vary"))
+		}
 	}
 }

@@ -32,9 +32,17 @@ COPY web/ ./
 COPY --from=wasm /src/web/src/api/wasm/_gomuks.wasm src/api/wasm/_gomuks.wasm
 COPY --from=wasm /src/web/src/api/types/stdcommands.json /src/web/src/api/types/stdcommands.d.ts src/api/types/
 COPY --from=wasm /codeblock public/_gomuks/codeblock
+# Pre-compressed sidecars, so wasmukserve never compresses 30 MB of wasm per
+# request. Brotli is about 30% smaller than gzip on the wasm binary (4.9 MB
+# against 7.1 MB), which is the download that decides how long a cold start
+# takes; gzip stays for the rare client that doesn't take brotli. Compressing
+# the wasm at quality 11 takes about a minute of build time.
+RUN apk add --no-cache brotli
 RUN npm run build \
 	&& find dist -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.svg' \) \
-		-exec gzip -9 -k {} +
+		-exec gzip -9 -k {} + \
+	&& find dist -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.svg' \) \
+		-exec brotli -q 11 -k {} +
 
 # The server binary embeds web/dist (like the native gomuks server does), so
 # the final image is just that one static binary.

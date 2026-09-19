@@ -62,6 +62,18 @@ const versionMetaTemplate = "\t<meta name=\"gomuks-version-description\" content
 
 // loadIndex fills in the version so the settings screen can show it, the same
 // as pkg/gomuks does when it starts its HTTP server.
+//
+// It deliberately does not preload the wasm module, which looks like an easy
+// win: the worker that fetches it is only created once the frontend has taken
+// a Web Lock, read its configuration and restored the room list, so the
+// largest download of the load starts last. Both <link rel="preload"
+// as="fetch"> and <link rel="prefetch"> make it worse. On a fast connection
+// the file is fetched twice, and on a throttled one the worker's
+// instantiateStreaming attaches to the response the hint already downloaded
+// and fails with "WebAssembly compilation aborted: Response body loading was
+// aborted", so the backend never starts. Starting the download earlier means
+// compiling it on the main thread and passing the module to the worker, so
+// there is only ever one consumer of the stream.
 func (s *server) loadIndex() {
 	data, err := fs.ReadFile(s.files, "index.html")
 	if err != nil {
@@ -133,20 +145,47 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Service-Worker-Allowed", "/")
 	}
 	w.Header().Set("Content-Type", contentType)
-	// The build pre-compresses the large files; serve the sidecar when the
+	// The build pre-compresses the large files; serve a sidecar when the
 	// client accepts it instead of compressing 30 MB of wasm per request.
-	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-		if gzFile, gzInfo, gzErr := s.open(name + ".gz"); gzErr == nil {
-			defer func() {
-				_ = gzFile.Close()
-			}()
-			w.Header().Set("Content-Encoding", "gzip")
-			w.Header().Add("Vary", "Accept-Encoding")
-			serveFile(w, r, name, gzInfo.ModTime(), gzFile)
-			return
+	// Brotli is tried first because it is about 30% smaller than gzip on the
+	// wasm binary, which is the whole download that matters here.
+	accept := r.Header.Get("Accept-Encoding")
+	for _, enc := range precompressed {
+		if !acceptsEncoding(accept, enc.name) {
+			continue
 		}
+		encFile, encInfo, encErr := s.open(name + enc.ext)
+		if encErr != nil {
+			continue
+		}
+		defer func() {
+			_ = encFile.Close()
+		}()
+		w.Header().Set("Content-Encoding", enc.name)
+		w.Header().Add("Vary", "Accept-Encoding")
+		serveFile(w, r, name, encInfo.ModTime(), encFile)
+		return
 	}
 	serveFile(w, r, name, info.ModTime(), file)
+}
+
+// precompressed lists the sidecar files the build produces, best first.
+var precompressed = []struct{ name, ext string }{
+	{"br", ".br"},
+	{"gzip", ".gz"},
+}
+
+// acceptsEncoding reports whether the client listed the encoding in
+// Accept-Encoding. A plain substring check would be enough in practice, but
+// the header is a token list and matching it as one is barely more work.
+func acceptsEncoding(header, encoding string) bool {
+	for part := range strings.SplitSeq(header, ",") {
+		name, _, _ := strings.Cut(part, ";")
+		if strings.EqualFold(strings.TrimSpace(name), encoding) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *server) open(name string) (fs.File, fs.FileInfo, error) {
