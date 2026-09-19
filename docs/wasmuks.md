@@ -334,17 +334,17 @@ So the download is about 85% of it, and it is the bandwidth that decides,
 not the order things happen in:
 
 * **Compress it properly.** Brotli takes the download from 7.1 MB to 4.9 MB,
-  which is around 1.9 s of that 6.3 s at this speed.
-* **Starting it earlier barely helps.** The download used to begin only after
-  SQLite and the OPFS pool were set up, because the worker awaited those
-  first; it now runs alongside them. That measured 7.52 s against 7.66 s,
-  which is inside the spread of the runs. The reason is that the cold start at
+  and the same measurement from 7.5 s to 6.1 s. That saving repeats on every
+  deployment, because the file name is content-hashed and every device fetches
+  the whole thing again.
+* **Starting it earlier doesn't help.** The download begins only after SQLite
+  and the OPFS pool are set up, because the worker awaits those first, which
+  looks like an obvious thing to fix. Running it alongside them instead
+  measured 7.52 s against 7.66 s, inside the spread of the runs, so it was
+  reverted rather than carried as a difference from upstream. A cold start at
   a given bandwidth is close to total bytes divided by bandwidth: fetching the
   module earlier only makes it share the connection with the rest of the
-  frontend, and it finishes at the same time. The change is kept because it
-  removes a serialisation that has no reason to be there, and because a
-  browser reading the file from its cache is not bandwidth bound, but it is
-  not where the time goes.
+  frontend, and it finishes at the same time.
 * **Don't try to start it from the page.** A `<link rel="preload">` looks like
   the obvious next step and breaks the load; see the note under recommended
   headers above, and the comment on `loadIndex` in `cmd/wasmukserve/main.go`.
