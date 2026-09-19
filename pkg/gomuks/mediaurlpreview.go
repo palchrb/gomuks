@@ -19,6 +19,7 @@ package gomuks
 import (
 	"cmp"
 	"context"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -60,6 +61,7 @@ func (gmx *Gomuks) GetURLPreview(ctx context.Context, url string, encrypt bool) 
 	if preview.ImageURL != "" {
 		var content *event.MessageEventContent
 
+		gmx.temporaryMXCLock.Lock()
 		if encrypt {
 			if fileInfo, ok := gmx.temporaryMXCToEncryptedFileInfo[preview.ImageURL]; ok {
 				content = &event.MessageEventContent{File: fileInfo}
@@ -69,6 +71,7 @@ func (gmx *Gomuks) GetURLPreview(ctx context.Context, url string, encrypt bool) 
 				content = &event.MessageEventContent{URL: mxc}
 			}
 		}
+		gmx.temporaryMXCLock.Unlock()
 
 		parsedImageURL, err := preview.ImageURL.Parse()
 		if content == nil && (err != nil || parsedImageURL.IsEmpty()) {
@@ -81,12 +84,13 @@ func (gmx *Gomuks) GetURLPreview(ctx context.Context, url string, encrypt bool) 
 			}
 			defer resp.Body.Close()
 
-			content, err = gmx.UploadMedia(ctx, resp.Body, jsoncmd.UploadMediaParams{Encrypt: encrypt}, nil)
+			content, err = gmx.uploadPreviewImage(ctx, resp.Body, jsoncmd.UploadMediaParams{Encrypt: encrypt})
 			if err != nil {
 				log.Err(err).Msg("Failed to upload URL preview image")
 				return nil, err
 			}
 
+			gmx.temporaryMXCLock.Lock()
 			if encrypt {
 				gmx.temporaryMXCToEncryptedFileInfo[preview.ImageURL] = content.File
 			} else {
@@ -95,14 +99,31 @@ func (gmx *Gomuks) GetURLPreview(ctx context.Context, url string, encrypt bool) 
 			if content.Info != nil {
 				gmx.temporaryMXCToBlurhash[preview.ImageURL] = cmp.Or(content.Info.Blurhash, content.Info.AnoaBlurhash)
 			}
+			gmx.temporaryMXCLock.Unlock()
 		}
 
 		if content != nil {
+			gmx.temporaryMXCLock.Lock()
 			preview.ImageBlurhash = gmx.temporaryMXCToBlurhash[preview.ImageURL]
+			gmx.temporaryMXCLock.Unlock()
 			preview.ImageURL = content.URL
 			preview.ImageEncryption = content.File
 		}
 	}
 
 	return &preview, nil
+}
+
+// uploadPreviewImage uploads the preview image found for a URL, which has to
+// be re-uploaded because the media repository's copy is temporary. The server
+// build uploads it the same way as any other file, through a temp file and the
+// media cache; the wasm build has no filesystem and replaces this with an
+// in-memory upload.
+func (gmx *Gomuks) uploadPreviewImage(
+	ctx context.Context, reader io.Reader, params jsoncmd.UploadMediaParams,
+) (*event.MessageEventContent, error) {
+	if gmx.UploadMediaFunc != nil {
+		return gmx.UploadMediaFunc(ctx, reader, params)
+	}
+	return gmx.UploadMedia(ctx, reader, params, nil)
 }

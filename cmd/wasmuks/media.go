@@ -432,3 +432,17 @@ func jsDownloadCallback(_ js.Value, args []js.Value) any {
 	}()
 	return nil
 }
+
+// uploadMediaFromReader is the in-memory upload the shared URL preview code
+// uses in place of UploadMedia, which starts by writing a temp file. Preview
+// images are small enough to read into memory, which is the only place there
+// is to put them here.
+func uploadMediaFromReader(
+	ctx context.Context, reader io.Reader, params jsoncmd.UploadMediaParams,
+) (*event.MessageEventContent, error) {
+	payload, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read media: %w", err)
+	}
+	return uploadMedia(ctx, params, uploadExtras{}, payload, nil)
+}

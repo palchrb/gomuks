@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -88,8 +89,18 @@ type Gomuks struct {
 	RemoveDataFunc func(ctx context.Context, client *hicli.HiClient) error
 	execBuffer     *ExecutionBuffer[json.RawMessage, *mautrix.RespError]
 
+	// UploadMediaFunc replaces the filesystem-based media upload where the
+	// shared code uploads something itself, which is the image in a URL
+	// preview. Nil means use UploadMedia, which needs a temp file; the wasm
+	// build has no filesystem and keeps the upload in memory instead.
+	UploadMediaFunc func(ctx context.Context, reader io.Reader, params jsoncmd.UploadMediaParams) (*event.MessageEventContent, error)
+
 	// Maps from temporary MXC URIs from by the media repository for URL
-	// previews to permanent MXC URIs suitable for sending in an inline preview
+	// previews to permanent MXC URIs suitable for sending in an inline
+	// preview. Previews for several links in one message are resolved in
+	// parallel, so the lock is not optional: a concurrent map write is a
+	// fatal error that no recover can catch.
+	temporaryMXCLock                sync.Mutex
 	temporaryMXCToPermanent         map[id.ContentURIString]id.ContentURIString
 	temporaryMXCToEncryptedFileInfo map[id.ContentURIString]*event.EncryptedFileInfo
 	temporaryMXCToBlurhash          map[id.ContentURIString]string

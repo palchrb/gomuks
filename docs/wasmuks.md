@@ -288,6 +288,16 @@ would only be worth loading at the moment someone asks for a conversion.
 Uploads are also held in memory rather than streamed, so a very large file can
 exhaust the worker.
 
+When a link is pasted, the preview comes from the homeserver's `preview_url`
+endpoint, the same as in the server build, and the image it points at has to
+be re-uploaded because the media repository's copy is temporary. That upload
+happened through `UploadMedia`, which starts by writing a temp file, so it
+failed here with ENOSYS and the whole preview was dropped: the frontend logs
+the error and sends the message without it, which made this look like a
+missing feature rather than a broken one. The upload step is now replaceable
+(`Gomuks.UploadMediaFunc`) and the wasm build does it in memory. Previews
+without an image were never affected.
+
 Media is served by a service worker (`web/public/wasmuks-media-sw.js`) out of
 the Cache API, with the backend in the worker downloading on demand. The
 server build serves the same URLs over HTTP, so the frontend does not know the

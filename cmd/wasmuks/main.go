@@ -427,6 +427,7 @@ func main() {
 	dbutil.ForceDeadlockDetection = true
 
 	gmx.RemoveDataFunc = removeData
+	gmx.UploadMediaFunc = uploadMediaFromReader
 	gmx.EventBuffer = gomuks.NewEventBuffer(0)
 	gmx.EventBuffer.Subscribe(0, nil, func(evt *gomuks.BufferedEvent) {
 		if !holdEvent(evt) {
