@@ -116,4 +116,10 @@ div.sync-bar {
 		border-top-color: var(--error-color);
 		color: var(--error-color);
 	}
+
+	/* No network is a state of the world, not a failure of the app. */
+	&.offline {
+		border-top-color: var(--border-color);
+		color: var(--secondary-text-color);
+	}
 }
