@@ -21,6 +21,12 @@
 // keyboard; the visual viewport shrinking while something editable has focus
 // is the reliable one. The class only zeroes the inset, so being wrong where
 // the inset is already zero (desktops, most Android phones) changes nothing.
+//
+// The comparison is against the screen, not the layout viewport, because a
+// standalone PWA on iOS doesn't resize the layout viewport for the keyboard:
+// it pushes the whole page up. The visual viewport still shrinks by the
+// keyboard's height in that case, its offset just grows by the same amount,
+// so neither window.innerHeight nor the offset can be part of the sum.
 const KEYBOARD_MIN_SCREEN_FRACTION = 0.15
 
 function isEditable(elem: Element | null): boolean {
@@ -33,14 +39,14 @@ function update() {
 	if (!viewport) {
 		return
 	}
-	const covered = screen.height - (viewport.height + viewport.offsetTop)
+	const covered = screen.height - viewport.height
 	const open = isEditable(document.activeElement) && covered > screen.height * KEYBOARD_MIN_SCREEN_FRACTION
 	document.documentElement.classList.toggle("keyboard-open", open)
 }
 
 export function watchSoftKeyboard() {
 	window.visualViewport?.addEventListener("resize", update)
-	window.visualViewport?.addEventListener("scroll", update)
+	window.addEventListener("resize", update)
 	document.addEventListener("focusin", update)
 	// activeElement is still the old element during focusout.
 	document.addEventListener("focusout", () => setTimeout(update, 0))
