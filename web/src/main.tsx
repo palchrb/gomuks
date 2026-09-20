@@ -16,6 +16,7 @@
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import App from "./App.tsx"
+import { watchSoftKeyboard } from "./util/softkeyboard.ts"
 import "./index.css"
 
 // Views like the image pack editor are loaded on demand, from files whose
@@ -46,6 +47,8 @@ window.addEventListener("vite:preloadError", evt => {
 	evt.preventDefault()
 	window.location.reload()
 })
+
+watchSoftKeyboard()
 
 createRoot(document.getElementById("root")!).render(
 	<StrictMode>

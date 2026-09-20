@@ -193,6 +193,12 @@
 	}
 }
 
+/* The software keyboard covers the home indicator area, but iOS keeps
+   reporting the inset; see util/softkeyboard.ts. */
+html.keyboard-open {
+	--window-bottom-margin: 0px;
+}
+
 @font-face {
 	font-family: "Inter";
 	font-style: normal;
