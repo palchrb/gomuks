@@ -96,6 +96,28 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 		RequestID: int64(data.Get("request_id").Int()),
 		Data:      exstrings.UnsafeBytes(data.Get("data").String()),
 	}
+	switch wrappedCmd.Command {
+	case jsoncmd.ReqPing:
+		// The server build answers this in its websocket layer before hicli
+		// ever sees it, so hicli has no handler. The frontend sends one after
+		// the tab has been in the background, to tell a worker that is merely
+		// slow from one iOS has quietly killed.
+		postMessage(jsoncmd.RespSuccess, wrappedCmd.RequestID, json.RawMessage(`{}`))
+		return nil
+	case "wasm-resume":
+		// After the tab has been in the background for a while, the /sync
+		// that was in flight is often a zombie: iOS suspended the fetch and
+		// resumed nothing, so it neither fails nor completes until the HTTP
+		// client's own timeout, minutes later. The status still says ok the
+		// whole time, so nothing on screen hints that new messages are not
+		// coming. Restart the loop: Sync stops the running one, which aborts
+		// that request, and starts over from the same since token.
+		if gmx.Client != nil && gmx.Client.IsSyncing() {
+			gmx.Log.Info().Msg("Tab resumed, restarting sync")
+			go gmx.Client.Sync()
+		}
+		return nil
+	}
 	if wrappedCmd.Command == "wasm-upload" {
 		// The parameters are the same ones the server build takes as query
 		// parameters, so the upload dialog's options work the same way.
