@@ -267,7 +267,12 @@ export default class WasmClient extends RPCClient {
 		}
 		this.lastResumedAt.emit(Date.now())
 		this.#checkForUpdate(false).catch(err => console.warn("Failed to check for a new build", err))
-		if (this.#hiddenAt && Date.now() - this.#hiddenAt >= RESUME_RESTART_MS) {
+		// Only once the worker has connected. Before that there is no sync to
+		// restart, and a ping would sit in the queue while the module is still
+		// downloading, which on a slow connection takes longer than the
+		// watchdog allows: it would reload the page, start the download over,
+		// and never get anywhere.
+		if (this.#ready && this.#hiddenAt && Date.now() - this.#hiddenAt >= RESUME_RESTART_MS) {
 			this.#checkAfterResume()
 		}
 	}
@@ -288,6 +293,23 @@ export default class WasmClient extends RPCClient {
 		})
 		const showWaiting = setTimeout(() => this.workerUnresponsive.emit(true), RESUME_PING_SHOW_MS)
 		const giveUp = setTimeout(() => {
+			// Same cooldown as the update check, and shared with it: whatever
+			// the reason, this page must never reload itself in a loop.
+			let lastReload = 0
+			try {
+				lastReload = Number(localStorage.getItem(UPDATE_RELOAD_KEY)) || 0
+			} catch {
+				// Storage can be unavailable; reloading once is still right.
+			}
+			if (Date.now() - lastReload < UPDATE_RELOAD_COOLDOWN_MS) {
+				console.error("Worker isn't answering after resuming, but the page was reloaded recently, leaving it")
+				return
+			}
+			try {
+				localStorage.setItem(UPDATE_RELOAD_KEY, Date.now().toString())
+			} catch {
+				// Ignore, see above.
+			}
 			console.error(`Worker didn't answer within ${RESUME_PING_TIMEOUT_MS} ms of resuming, reloading`)
 			window.location.reload()
 		}, RESUME_PING_TIMEOUT_MS)
