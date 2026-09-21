@@ -105,17 +105,14 @@ func jsMessageListener(_ js.Value, args []js.Value) any {
 		postMessage(jsoncmd.RespSuccess, wrappedCmd.RequestID, json.RawMessage(`{}`))
 		return nil
 	case "wasm-resume":
-		// After the tab has been in the background for a while, the /sync
-		// that was in flight is often a zombie: iOS suspended the fetch and
-		// resumed nothing, so it neither fails nor completes until the HTTP
-		// client's own timeout, minutes later. The status still says ok the
-		// whole time, so nothing on screen hints that new messages are not
-		// coming. Restart the loop: Sync stops the running one, which aborts
-		// that request, and starts over from the same since token.
-		if gmx.Client != nil && gmx.Client.IsSyncing() {
-			gmx.Log.Info().Msg("Tab resumed, restarting sync")
-			go gmx.Client.Sync()
+		var params struct {
+			HiddenAt int64 `json:"hidden_at"`
 		}
+		if err := json.Unmarshal(wrappedCmd.Data, &params); err != nil {
+			gmx.Log.Warn().Err(err).Msg("Failed to parse resume parameters")
+			return nil
+		}
+		onResume(time.UnixMilli(params.HiddenAt))
 		return nil
 	}
 	if wrappedCmd.Command == "wasm-upload" {
@@ -487,6 +484,9 @@ func main() {
 		Int("gc_ballast_mb", ballastMB).
 		Msg("wasm configuration")
 	gmx.StartClient()
+	if gmx.Client != nil {
+		trackSyncRequests()
+	}
 	if stats := gmx.Client.DB.RawDB.Stats(); stats.InUse > 0 {
 		gmx.Log.Error().Int("in_use", stats.InUse).Msg("Database connections still in use after startup, expect hangs")
 	}

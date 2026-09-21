@@ -281,7 +281,11 @@ export default class WasmClient extends RPCClient {
 	// the room list cache makes cheap.
 	#checkAfterResume() {
 		// Not queued like an RPC: a worker that isn't ready has no sync to restart.
-		this.#worker?.postMessage({ command: "wasm-resume", request_id: 0, data: "{}" })
+		this.#worker?.postMessage({
+			command: "wasm-resume",
+			request_id: 0,
+			data: JSON.stringify({ hidden_at: this.#hiddenAt }),
+		})
 		const showWaiting = setTimeout(() => this.workerUnresponsive.emit(true), RESUME_PING_SHOW_MS)
 		const giveUp = setTimeout(() => {
 			console.error(`Worker didn't answer within ${RESUME_PING_TIMEOUT_MS} ms of resuming, reloading`)
