@@ -48,7 +48,7 @@ binary, which embeds `web/dist/`:
 
 ```sh
 cd web/dist
-find . -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.svg' \) -exec gzip -9 -k {} +
+find . -type f -name '*.wasm' -exec gzip -9 -k {} +
 find . -type f \( -name '*.wasm' -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.json' -o -name '*.svg' \) -exec brotli -q 11 -k {} +
 cd ../..
 go build -o wasmukserve ./cmd/wasmukserve
@@ -60,7 +60,9 @@ back to gzip, sets the cache headers below, and serves `config.json` from the
 given path so it can be edited without rebuilding. `-dir` serves a directory
 instead of the embedded files. Brotli is worth the minute it takes to
 compress: 4.9 MB against 7.1 MB for the wasm binary, and that download is
-most of a cold start.
+most of a cold start. Gzip is only needed for the wasm modules, for browsers
+on plain `http://` (a LAN address), which don't ask for brotli; the rest of
+the files are only ever fetched over HTTPS by browsers that do.
 
 Any other static file server works too: serve `web/dist/` as static files. The wasm mode is enabled
 automatically when the files are served statically (the Go server injects a
