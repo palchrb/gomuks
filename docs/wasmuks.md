@@ -236,10 +236,15 @@ comes back as a zombie that neither fails nor completes until the HTTP
 client's own timeout, minutes later; sometimes the worker running the backend
 is gone altogether. Neither produces an error, so the sync status stays
 "ok" and the bar has nothing to show. The frontend now handles both when the
-tab becomes visible after at least 20 seconds hidden: it tells the backend to
+tab becomes visible after at least 5 seconds hidden: it tells the backend to
 restart its sync, which aborts the stuck request and starts over from the
-same token, and it pings the worker; no answer within 15 seconds means the
-worker is dead, and the page reloads, which the room list cache makes cheap.
+same token, and it pings the worker. A healthy worker answers within
+milliseconds; after 2 seconds of silence the bar says "Reconnecting to
+server..." so the wait is at least visible, and no answer within 15 seconds
+means the worker is dead, and the page reloads, which the room list cache
+makes cheap. The 15 seconds are deliberate: Go on wasm can't interrupt a
+goroutine, so a worker busy with a large catch-up can't answer until it is
+done, and reloading it then would throw that work away.
 
 **A room shows no message preview in the room list, while the server build
 shows one.** The same cache can store a room's preview event id without the

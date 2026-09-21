@@ -79,10 +79,19 @@ const LOCK_NAME = "gomuks-wasm"
 const UPDATE_CHECK_INTERVAL_MS = 60_000
 const UPDATE_RELOAD_COOLDOWN_MS = 60_000
 const UPDATE_RELOAD_KEY = "gomuks_wasm_update_reload"
-// A tab hidden for at least this long gets its sync restarted on resume, and
-// the worker has this long to answer a ping before the page gives up on it.
-const RESUME_RESTART_MS = 20_000
+// A tab hidden for at least this long gets its sync restarted on resume. The
+// threshold only exists so that flipping between tabs on a desktop doesn't
+// restart the sync every time; a restart costs one aborted long poll, and iOS
+// freezes a backgrounded app within seconds, so there is no reason to wait.
+const RESUME_RESTART_MS = 5_000
+// How long the worker has to answer the ping sent on resume before the page
+// gives up on it. Generous on purpose: Go on wasm has no time-based
+// preemption, so a worker in the middle of a large catch-up sync can't answer
+// until that work yields, and a false positive costs a reload that throws the
+// catch-up away. A healthy worker answers in milliseconds, so after this much
+// silence the wait is shown instead of hidden.
 const RESUME_PING_TIMEOUT_MS = 15_000
+const RESUME_PING_SHOW_MS = 2_000
 
 interface WasmConnectionCommand extends BaseRPCCommand<ConnectionEvent> {
 	command: "wasm-connection"
@@ -109,6 +118,9 @@ export default class WasmClient extends RPCClient {
 	// uses the resume time to give the sync a grace period before saying
 	// anything about it (see WasmSyncBar).
 	readonly lastResumedAt = new NonNullCachedEventDispatcher<number>(Date.now())
+	// True while the worker has been silent for a while after a resume ping,
+	// so the sync bar can say so instead of the screen looking fine.
+	readonly workerUnresponsive = new NonNullCachedEventDispatcher<boolean>(false)
 	#hiddenAt = 0
 	// index.html as it was when this page loaded, used to notice new builds.
 	#loadedIndexHTML?: string
@@ -266,17 +278,20 @@ export default class WasmClient extends RPCClient {
 	#checkAfterResume() {
 		// Not queued like an RPC: a worker that isn't ready has no sync to restart.
 		this.#worker?.postMessage({ command: "wasm-resume", request_id: 0, data: "{}" })
-		const timeout = setTimeout(() => {
+		const showWaiting = setTimeout(() => this.workerUnresponsive.emit(true), RESUME_PING_SHOW_MS)
+		const giveUp = setTimeout(() => {
 			console.error(`Worker didn't answer within ${RESUME_PING_TIMEOUT_MS} ms of resuming, reloading`)
 			window.location.reload()
 		}, RESUME_PING_TIMEOUT_MS)
-		this.request("ping", {}).then(
-			() => clearTimeout(timeout),
-			err => {
-				clearTimeout(timeout)
-				console.warn("Ping after resume failed", err)
-			},
-		)
+		const answered = () => {
+			clearTimeout(showWaiting)
+			clearTimeout(giveUp)
+			this.workerUnresponsive.emit(false)
+		}
+		this.request("ping", {}).then(answered, err => {
+			answered()
+			console.warn("Ping after resume failed", err)
+		})
 	}
 
 	// The server build tells clients its frontend version over the connection
