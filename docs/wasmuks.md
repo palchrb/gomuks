@@ -239,6 +239,18 @@ rebuilt from the database:
 await client.store.deleteCache(); location.reload()
 ```
 
+**After the app has been in the background, the timeline looks fine but
+nothing new arrives, with no warning.** iOS suspends a backgrounded PWA and
+resumes it inconsistently. Sometimes the `/sync` request that was in flight
+comes back as a zombie that neither fails nor completes until the HTTP
+client's own timeout, minutes later; sometimes the worker running the backend
+is gone altogether. Neither produces an error, so the sync status stays
+"ok" and the bar has nothing to show. The frontend now handles both when the
+tab becomes visible after at least 20 seconds hidden: it tells the backend to
+restart its sync, which aborts the stuck request and starts over from the
+same token, and it pings the worker; no answer within 15 seconds means the
+worker is dead, and the page reloads, which the room list cache makes cheap.
+
 **A room shows no message preview in the room list, while the server build
 shows one.** The same cache can store a room's preview event id without the
 event it points to: the event is only written along if it happens to be

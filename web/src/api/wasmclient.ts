@@ -83,6 +83,10 @@ const LOCK_NAME = "gomuks-wasm"
 const UPDATE_CHECK_INTERVAL_MS = 60_000
 const UPDATE_RELOAD_COOLDOWN_MS = 60_000
 const UPDATE_RELOAD_KEY = "gomuks_wasm_update_reload"
+// A tab hidden for at least this long gets its sync restarted on resume, and
+// the worker has this long to answer a ping before the page gives up on it.
+const RESUME_RESTART_MS = 20_000
+const RESUME_PING_TIMEOUT_MS = 15_000
 
 interface WasmConnectionCommand extends BaseRPCCommand<ConnectionEvent> {
 	command: "wasm-connection"
@@ -109,6 +113,7 @@ export default class WasmClient extends RPCClient {
 	// uses the resume time to give the sync a grace period before saying
 	// anything about it (see WasmSyncBar).
 	readonly lastResumedAt = new NonNullCachedEventDispatcher<number>(Date.now())
+	#hiddenAt = 0
 	// index.html as it was when this page loaded, used to notice new builds.
 	#loadedIndexHTML?: string
 	#lastUpdateCheck = 0
@@ -244,10 +249,38 @@ export default class WasmClient extends RPCClient {
 	}
 
 	#onVisibilityChange = () => {
-		if (document.visibilityState === "visible") {
-			this.lastResumedAt.emit(Date.now())
-			this.#checkForUpdate(false).catch(err => console.warn("Failed to check for a new build", err))
+		if (document.visibilityState !== "visible") {
+			this.#hiddenAt = Date.now()
+			return
 		}
+		this.lastResumedAt.emit(Date.now())
+		this.#checkForUpdate(false).catch(err => console.warn("Failed to check for a new build", err))
+		if (this.#hiddenAt && Date.now() - this.#hiddenAt >= RESUME_RESTART_MS) {
+			this.#checkAfterResume()
+		}
+	}
+
+	// iOS suspends a backgrounded PWA and resumes it inconsistently. Sometimes
+	// the /sync that was in flight comes back as a zombie that neither fails
+	// nor completes for minutes; sometimes the worker is gone altogether.
+	// Neither produces an error, so the timeline sits there looking fine and
+	// nothing new arrives. Have the worker restart its sync, and check that
+	// it can answer at all: if it can't, the only way back is a reload, which
+	// the room list cache makes cheap.
+	#checkAfterResume() {
+		// Not queued like an RPC: a worker that isn't ready has no sync to restart.
+		this.#worker?.postMessage({ command: "wasm-resume", request_id: 0, data: "{}" })
+		const timeout = setTimeout(() => {
+			console.error(`Worker didn't answer within ${RESUME_PING_TIMEOUT_MS} ms of resuming, reloading`)
+			window.location.reload()
+		}, RESUME_PING_TIMEOUT_MS)
+		this.request("ping", {}).then(
+			() => clearTimeout(timeout),
+			err => {
+				clearTimeout(timeout)
+				console.warn("Ping after resume failed", err)
+			},
+		)
 	}
 
 	// The server build tells clients its frontend version over the connection
