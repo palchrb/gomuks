@@ -65,6 +65,7 @@ interface WasmSyncBarProps {
 const WasmSyncBar = ({ rpc, syncStatus }: WasmSyncBarProps): JSX.Element | null => {
 	const client = use(ClientContext)!
 	const lastResumedAt = useEventAsState(rpc.lastResumedAt)
+	const workerUnresponsive = useEventAsState(rpc.workerUnresponsive)
 	const roomList = useEventAsState(client.store.roomList)
 	const online = useOnline()
 	const [, tick] = useReducer((x: number) => x + 1, 0)
@@ -81,6 +82,15 @@ const WasmSyncBar = ({ rpc, syncStatus }: WasmSyncBarProps): JSX.Element | null 
 		// A fact rather than a fault, so it gets neither a spinner nor the
 		// error colour. Nothing else is worth saying until the network is back.
 		return <div className="sync-bar offline">Offline</div>
+	} else if (workerUnresponsive) {
+		// The worker hasn't answered the ping sent when the tab resumed. It is
+		// either busy with a large catch-up or gone, in which case the page
+		// reloads when it gives up. Either way something is being attempted,
+		// and the sync status alone would say everything is fine.
+		return <div className="sync-bar reconnecting">
+			<SyncLoader size={6} color="var(--primary-color)"/>
+			Reconnecting to server...
+		</div>
 	} else if (syncStatus.type === "ok") {
 		return null
 	} else if (syncStatus.type === "waiting") {
