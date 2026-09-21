@@ -50,6 +50,8 @@ type HiClient struct {
 	Initialized       *exsync.Event
 	VerificationState jsoncmd.VerificationState
 
+	InitialDeviceDisplayName string
+
 	KeyBackupVersion id.KeyBackupVersion
 	KeyBackupKey     *backup.MegolmBackupKey
 
@@ -187,6 +189,8 @@ func New(rawDB, cryptoDB *dbutil.Database, log zerolog.Logger, pickleKey []byte,
 	c := &HiClient{
 		DB:  db,
 		Log: log,
+
+		InitialDeviceDisplayName: DefaultInitialDeviceDisplayName,
 
 		eventDecryptionWaiters: exsync.NewMap[id.EventID, chan struct{}](),
 		requestQueueWakeup:     make(chan struct{}, 1),

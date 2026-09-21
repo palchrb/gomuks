@@ -53,8 +53,6 @@ type Gomuks struct {
 	Server *http.Server
 	Client *hicli.HiClient
 
-	RootOverride string
-
 	ConfigDir string
 	DataDir   string
 	CacheDir  string
@@ -131,7 +129,7 @@ func (gmx *Gomuks) InitDirectories() {
 	// We need 4 directories: config, data, cache, logs
 	//
 	// 1. If GOMUKS_*_HOME is set, that value is used as the directory.
-	// 2. If GOMUKS_ROOT or the root argument is set, all directories are created under that.
+	// 2. If GOMUKS_ROOT is set, all directories are created under that.
 	// 3. Use system-specific defaults as below
 	//
 	// *nix:
@@ -149,7 +147,7 @@ func (gmx *Gomuks) InitDirectories() {
 	// - Config and Data: $HOME/Library/Application Support/gomuks
 	// - Cache: $HOME/Library/Caches/gomuks
 	// - Logs: $HOME/Library/Logs/gomuks
-	gomuksRoot := cmp.Or(gmx.RootOverride, os.Getenv("GOMUKS_ROOT"))
+	gomuksRoot := os.Getenv("GOMUKS_ROOT")
 	gmx.CacheDir = os.Getenv("GOMUKS_CACHE_HOME")
 	gmx.ConfigDir = os.Getenv("GOMUKS_CONFIG_HOME")
 	gmx.DataDir = os.Getenv("GOMUKS_DATA_HOME")
@@ -248,6 +246,9 @@ func (gmx *Gomuks) initClient() error {
 		gmx.HandleEvent,
 	)
 	gmx.Client.Client.SyncPresence = ptr.Val(gmx.Config.Matrix.SetPresence)
+	if gmx.Config.Matrix.InitialDeviceDisplayName != "" {
+		gmx.Client.InitialDeviceDisplayName = gmx.Config.Matrix.InitialDeviceDisplayName
+	}
 	gmx.Client.LogoutFunc = gmx.Logout
 	httpClient := gmx.Client.Client.Client
 	if runtime.GOOS == "js" {
