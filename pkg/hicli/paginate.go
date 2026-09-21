@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"go.mau.fi/util/exmaps"
+	"go.mau.fi/util/exslices"
 	"go.mau.fi/util/ptr"
 	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/event"
@@ -329,32 +331,59 @@ func (h *HiClient) Paginate(ctx context.Context, roomID id.RoomID, maxTimelineID
 			return nil, err
 		}
 	}
-	resp.RelatedEvents = make([]*database.Event, 0)
-	eventIDs := make([]id.EventID, len(resp.Events))
-	eventMap := make(map[id.EventID]struct{})
-	for i := len(resp.Events) - 1; i >= 0; i-- {
-		evt := resp.Events[i]
-		eventIDs[i] = evt.ID
-		eventMap[evt.ID] = struct{}{}
-		replyTo := evt.GetReplyTo()
-		if replyTo != "" {
-			_, replyToAdded := eventMap[replyTo]
-			if !replyToAdded {
-				dbEvt, err := h.DB.Event.GetByID(ctx, roomID, replyTo)
-				if err != nil {
-					return nil, fmt.Errorf("failed to get reply-to event: %w", err)
-				} else if dbEvt != nil {
-					resp.RelatedEvents = append(resp.RelatedEvents, dbEvt)
-					eventMap[replyTo] = struct{}{}
-				}
-			}
-		}
+	resp.RelatedEvents, err = h.collectRelatedEvents(ctx, resp.Events)
+	if err != nil {
+		return nil, err
 	}
+	eventIDs := exslices.CastFunc(resp.Events, func(from *database.Event) id.EventID {
+		return from.ID
+	})
 	resp.Receipts, err = h.GetReceipts(ctx, roomID, eventIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get receipts: %w", err)
 	}
 	return resp, nil
+}
+
+func (h *HiClient) collectRelatedEvents(ctx context.Context, events []*database.Event) ([]*database.Event, error) {
+	relatedEvents := make([]*database.Event, 0)
+	addedEventIDs := make(exmaps.Set[id.EventID], len(events))
+	addedEventRowIDs := make(exmaps.Set[database.EventRowID], len(events))
+	for _, evt := range events {
+		addedEventIDs.Add(evt.ID)
+		addedEventRowIDs.Add(evt.RowID)
+	}
+	for _, evt := range events {
+		if replyTo := evt.GetReplyTo(); replyTo != "" && !addedEventIDs.Has(replyTo) {
+			dbEvt, err := h.DB.Event.GetByID(ctx, evt.RoomID, replyTo)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get reply-to event: %w", err)
+			} else if dbEvt != nil {
+				h.ReprocessExistingEvent(ctx, dbEvt)
+				relatedEvents = append(relatedEvents, dbEvt)
+				addedEventIDs.Add(dbEvt.ID)
+				addedEventRowIDs.Add(dbEvt.RowID)
+			}
+		}
+		if evt.LastEditRowID != nil && !addedEventRowIDs.Has(*evt.LastEditRowID) {
+			targetEvt := evt.LastEditRef
+			if targetEvt == nil {
+				var err error
+				targetEvt, err = h.DB.Event.GetByRowID(ctx, *evt.LastEditRowID)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get last edit event: %w", err)
+				} else if targetEvt != nil {
+					h.ReprocessExistingEvent(ctx, targetEvt)
+				}
+			}
+			if targetEvt != nil {
+				relatedEvents = append(relatedEvents, targetEvt)
+				addedEventIDs.Add(targetEvt.ID)
+				addedEventRowIDs.Add(targetEvt.RowID)
+			}
+		}
+	}
+	return relatedEvents, nil
 }
 
 func (h *HiClient) GetReceipts(ctx context.Context, roomID id.RoomID, eventIDs []id.EventID) (map[id.EventID][]*database.Receipt, error) {
@@ -573,6 +602,14 @@ func (h *HiClient) GetEventContext(ctx context.Context, roomID id.RoomID, eventI
 			return nil, fmt.Errorf("failed to save session request for %s: %w", entry.SessionID, err)
 		}
 	}
+	allEvents := make([]*database.Event, 1, 1+len(resp.EventsBefore)+len(resp.EventsAfter))
+	allEvents[0] = wrappedResp.Event
+	allEvents = append(allEvents, wrappedResp.Before...)
+	allEvents = append(allEvents, wrappedResp.After...)
+	wrappedResp.RelatedEvents, err = h.collectRelatedEvents(ctx, allEvents)
+	if err != nil {
+		return nil, err
+	}
 	if len(decryptionQueue) > 0 {
 		h.WakeupRequestQueue()
 	}
@@ -627,6 +664,10 @@ func (h *HiClient) PaginateManual(
 	if len(decryptionQueue) > 0 {
 		h.WakeupRequestQueue()
 	}
+	wrappedResp.RelatedEvents, err = h.collectRelatedEvents(ctx, wrappedResp.Events)
+	if err != nil {
+		return nil, err
+	}
 	return &wrappedResp, nil
 }
 
@@ -660,9 +701,14 @@ func (h *HiClient) SearchLocal(ctx context.Context, params *jsoncmd.SearchParams
 	if len(resp) >= params.Limit {
 		nextBatch = fmt.Sprintf("local_offset:%d", offset+params.Limit)
 	}
+	relatedEvents, err := h.collectRelatedEvents(ctx, resp)
+	if err != nil {
+		return nil, err
+	}
 	return &jsoncmd.ManualPaginationResponse{
-		Events:    resp,
-		NextBatch: nextBatch,
+		Events:        resp,
+		NextBatch:     nextBatch,
+		RelatedEvents: relatedEvents,
 	}, nil
 }
 
@@ -693,13 +739,27 @@ func (h *HiClient) SearchServer(ctx context.Context, params *jsoncmd.SearchServe
 			return nil, fmt.Errorf("failed to process event #%d: %w", i+1, err)
 		}
 	}
+	wrappedResp.RelatedEvents, err = h.collectRelatedEvents(ctx, wrappedResp.Events)
+	if err != nil {
+		return nil, err
+	}
 	return wrappedResp, nil
 }
 
-func (h *HiClient) GetMentions(ctx context.Context, maxTS time.Time, unreadType database.UnreadType, limit int, roomID id.RoomID) ([]*database.Event, error) {
+func (h *HiClient) GetMentions(ctx context.Context, maxTS time.Time, unreadType database.UnreadType, limit int, roomID id.RoomID) (*jsoncmd.GetMentionsResponse, error) {
 	evts, err := h.DB.Event.GetMentions(ctx, maxTS, unreadType, limit, roomID)
+	if err != nil {
+		return nil, err
+	}
 	for _, evt := range evts {
 		h.ReprocessExistingEvent(ctx, evt)
 	}
-	return evts, err
+	relatedEvents, err := h.collectRelatedEvents(ctx, evts)
+	if err != nil {
+		return nil, err
+	}
+	return &jsoncmd.GetMentionsResponse{
+		Events:        evts,
+		RelatedEvents: relatedEvents,
+	}, nil
 }

@@ -361,7 +361,6 @@ func removeData(ctx context.Context, _ *hicli.HiClient) error {
 }
 
 func main() {
-	hicli.InitialDeviceDisplayName = "gomuks web"
 	// Timing lines are the main diagnostic in a browser, so keep them visible.
 	hicli.SlowOperationLogLevel = zerolog.InfoLevel
 	gmx = gomuks.NewGomuks()
@@ -376,7 +375,8 @@ func main() {
 		// the client sends no set_presence at all, and the homeserver then
 		// tells everyone you are online whenever the tab is open.
 		Matrix: gomuks.MatrixConfig{
-			SetPresence: ptr.Ptr(event.PresenceOffline),
+			InitialDeviceDisplayName: "gomuks web",
+			SetPresence:              ptr.Ptr(event.PresenceOffline),
 		},
 		Media: gomuks.MediaConfig{
 			ThumbnailSize: 120,

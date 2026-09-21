@@ -34,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/cgo"
@@ -45,6 +46,7 @@ import (
 	"go.mau.fi/util/exerrors"
 	"go.mau.fi/util/ptr"
 	"go.mau.fi/zeroconfig"
+	"gopkg.in/yaml.v3"
 	"maunium.net/go/mautrix/crypto"
 	"maunium.net/go/mautrix/event"
 
@@ -117,15 +119,17 @@ func sendBufferedEvent[T any](callback C.EventCallback, command *jsoncmd.Contain
 	C._gomuks_callEventCallback(callback, commandNames[command.Command], C.int64_t(command.RequestID), bytesToOwnedBuffer(data))
 }
 
+//export GomuksSetEnv
+func GomuksSetEnv(key *C.char, value *C.char) {
+	os.Setenv(C.GoString(key), C.GoString(value))
+}
+
 //export GomuksInit
-func GomuksInit(root *C.char) C.GomuksHandle {
+func GomuksInit(config C.GomuksBorrowedBuffer) C.GomuksHandle {
 	gomuks.DisablePush = true
-	hicli.InitialDeviceDisplayName = "gomuks ffi" // TODO customizable name
+	hicli.DefaultInitialDeviceDisplayName = "gomuks ffi"
 	gmx := gomuks.NewGomuks()
 	gmx.DisableAuth = true
-	if root != nil {
-		gmx.RootOverride = C.GoString(root)
-	}
 	gmx.InitDirectories()
 	gmx.Config = gomuks.Config{
 		Logging: zeroconfig.Config{
@@ -143,6 +147,11 @@ func GomuksInit(root *C.char) C.GomuksHandle {
 				},
 			}},
 		},
+	}
+	if configData := borrowBufferBytes(config); len(configData) > 0 {
+		if err := yaml.Unmarshal(configData, &gmx.Config); err != nil {
+			panic(fmt.Errorf("failed to unmarshal config: %w", err))
+		}
 	}
 	gmx.EventBuffer = gomuks.NewEventBuffer(0)
 	gmx.SetupLog()
