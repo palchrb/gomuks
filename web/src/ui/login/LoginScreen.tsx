@@ -150,6 +150,10 @@ export const LoginScreen = ({ client }: LoginScreenProps) => {
 		}
 		const pollFunc = () => client.rpc.oauthPollDeviceCode(homeserverURL, code, clientID).then(() => {
 			console.log("OAuth device code login successful")
+			// The pending login is only for resuming after a reload mid-flow.
+			// Left behind after success, the next login screen would resume
+			// polling a device code that expired long ago.
+			delete localStorage.pendingDeviceCodeLogin
 			if (!cancelled) {
 				resolve()
 			}
