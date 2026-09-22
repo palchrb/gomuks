@@ -362,11 +362,17 @@ div.connection-error-wrapper {
 		border: 2px solid var(--error-color);
 		border-radius: .5rem;
 		margin-top: 2rem;
+		margin-inline: 1rem;
 		padding: 1rem;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 1rem;
+		/* The wasm build puts the backend's last log lines in the message. */
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		max-height: 80vh;
+		overflow-y: auto;
 	}
 }
 
