@@ -197,3 +197,21 @@ add a `<link>` for the wasm binary to `index.html`, which looks like it
 should help and instead fetches the file twice, or, throttled, leaves the
 worker's streaming compile attached to an aborted response so the backend
 never starts at all.
+
+## Crash test
+
+`crash/run.mjs` kills a worker in the middle of SQLite write transactions on
+the OPFS SAH pool, over and over, and runs `integrity_check` after each kill.
+That is what a page reload, or iOS killing a backgrounded app, does to the
+wasm build.
+
+```
+node crash/run.mjs 100            # the VFS as shipped: corrupt within a few kills
+node crash/run.mjs 100 --patch    # with the reserved-lock fix: survives
+node crash/run.mjs 100 --upstream-pragmas   # upstream gomuks' settings
+```
+
+The cause is in the VFS: `xCheckReservedLock` always reports a write lock,
+so SQLite never rolls back a hot journal. The fix is in
+`web/src/api/wasm/sqlite_bridge.ts` (`patchReservedLock`), with a copy in
+`crash/reservedlock.js` for the test.
