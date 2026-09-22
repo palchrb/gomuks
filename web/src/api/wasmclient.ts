@@ -426,6 +426,35 @@ export default class WasmClient extends RPCClient {
 		}
 	}
 
+	// Deletes the local database and everything else the backend stored, for
+	// when the database can't be opened any more (SQLite reports it as
+	// malformed). The server has the messages, so this amounts to a fresh
+	// login, and the key backup brings back the keys for old messages. Done
+	// from the main thread after stopping the worker, so it also works when
+	// the worker is wedged: terminating it releases its file handles.
+	async resetLocalData(): Promise<void> {
+		await this.stop()
+		const root = await navigator.storage.getDirectory()
+		for (const name of [".opfs-sahpool", "pickle.key"]) {
+			for (let attempt = 0; ; attempt++) {
+				try {
+					await root.removeEntry(name, { recursive: true })
+					break
+				} catch (err) {
+					if ((err as DOMException).name === "NotFoundError") {
+						break
+					} else if (attempt >= 10) {
+						throw err
+					}
+					// The terminated worker's access handles close asynchronously.
+					await new Promise(resolve => setTimeout(resolve, 200))
+				}
+			}
+		}
+		await caches.delete("wasmuks-media-v1").catch(() => {})
+		console.info("Deleted local database")
+	}
+
 	async stop() {
 		document.removeEventListener("visibilitychange", this.#onVisibilityChange)
 		this.#worker?.terminate()
