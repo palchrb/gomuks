@@ -363,34 +363,43 @@ func (h *HiClient) repairOTKsIfNeeded(ctx context.Context) error {
 
 func (h *HiClient) Start(ctx context.Context) error {
 	if h.Account != nil {
-		// What the local database says: whether the cross-signing private
-		// keys are here. The server can take verification away (the key
-		// backup may have been reset elsewhere), but it can't make an
-		// unverified device verified, and nothing it says changes what the
-		// first sync asks for. So a verified device starts syncing at once
-		// and does the server checks alongside, instead of holding the
-		// first sync for two round-trips.
-		local, err := h.checkIsCurrentDeviceVerified(ctx, true)
+		err := h.CheckServerVersions(ctx)
+		if isConnectionError(err) {
+			// The server passed this check when the account logged in, so
+			// not being able to reach it now is no reason to refuse to
+			// start: redo the check once a sync goes through.
+			zerolog.Ctx(ctx).Warn().Err(err).
+				Msg("Couldn't reach the server to check its versions, retrying after the first sync")
+			h.startupChecksPending.Store(true)
+		} else if err != nil {
+			return err
+		}
+
+		h.VerificationState, err = h.checkIsCurrentDeviceVerified(ctx, false)
+		if isConnectionError(err) {
+			// The key backup comparison needs the server. Go with what the
+			// local database says so cached history is usable offline, and
+			// redo the full check once a sync goes through.
+			zerolog.Ctx(ctx).Warn().Err(err).
+				Msg("Couldn't reach the server to check the key backup, using local verification state")
+			h.VerificationState, err = h.checkIsCurrentDeviceVerified(ctx, true)
+			h.VerificationState.HasSSSS = h.VerificationState.IsVerified
+			h.startupChecksPending.Store(true)
+		}
 		if err != nil {
 			return err
 		}
-		if local.IsVerified {
-			local.HasSSSS = true
-			local.StateChecked = true
-			h.VerificationState = local
-			h.sendInitSyncToClients = false
-			go h.Sync()
-			go h.finishStartupChecks(h.Log.WithContext(context.Background()))
-		} else {
-			err = h.checkUnverifiedWithServer(ctx)
-			if err != nil {
-				return err
-			}
-			h.sendInitSyncToClients = true
-		}
+		h.VerificationState.StateChecked = true
 		zerolog.Ctx(ctx).Debug().
 			Any("verification_state", h.VerificationState).
 			Msg("Checked current device verification status")
+
+		if h.VerificationState.IsVerified {
+			h.sendInitSyncToClients = false
+			go h.Sync()
+		} else {
+			h.sendInitSyncToClients = true
+		}
 		go h.loadOwnProfile(ctx)
 	} else {
 		h.sendInitSyncToClients = true
