@@ -314,8 +314,84 @@ async function init() {
 	// journal_mode=PERSIST the journal file stays around permanently, so the
 	// database needs two, and the default capacity of 6 leaves little slack.
 	sqlite3.PoolUtil = await sqlite3.installOpfsSAHPoolVfs({ initialCapacity: 12 })
+	patchReservedLock(sqlite3, sqlite3.PoolUtil)
 
 	self.sqlite3 = sqlite3
+}
+
+// The SAH pool VFS has no file locking: xLock always succeeds, and
+// xCheckReservedLock always says another connection holds a write lock.
+// SQLite only rolls back a leftover journal (a "hot journal", what a
+// transaction interrupted by a crash leaves behind) when nobody holds that
+// lock, so with this VFS it never does. Whenever the worker died in the
+// middle of a write transaction (a page reload, iOS killing a backgrounded
+// app), the next start read a half-written file: "database disk image is
+// malformed". pkg/sqlite-wasm-js/bench/crash reproduces it within a few kills,
+// with upstream's pragmas as well as ours.
+//
+// All connections live in this one worker (the Web Lock keeps a second tab
+// out), so the true answer is known here: another connection of ours holds
+// RESERVED or more. Track the lock levels and answer that. The pool's own
+// io methods are shared by every file it opens, so they are replaced once,
+// found through a throwaway file.
+function patchReservedLock(sqlite3: Meowlite, pool: SAHPoolUtil) {
+	const { capi, wasm } = sqlite3
+	const probeName = "/.reserved-lock-probe"
+	const probe = new pool.OpfsSAHPoolDb(probeName)
+	let pMethods: number
+	const stack = wasm.pstack.pointer
+	try {
+		const pOut = wasm.pstack.allocPtr() as number
+		const rc = capi.sqlite3_file_control(probe.pointer!, "main", capi.SQLITE_FCNTL_FILE_POINTER, pOut)
+		if (rc !== 0) {
+			throw new Error(`SQLITE_FCNTL_FILE_POINTER failed with ${rc}`)
+		}
+		pMethods = wasm.peekPtr(wasm.peekPtr(pOut)) as number
+	} finally {
+		wasm.pstack.restore(stack)
+		probe.close()
+		pool.unlink(probeName)
+	}
+	type FileFunc = (pFile: number, arg: number) => number
+	interface IoMethods {
+		$xLock: number
+		$xUnlock: number
+		$xClose: number
+		installMethods(methods: Record<string, unknown>, applyArgcCheck: boolean): void
+	}
+	const IoMethods = capi.sqlite3_io_methods as unknown as new (ptr: number) => IoMethods
+	const io = new IoMethods(pMethods)
+	const entry = (ptr: number) => wasm.functionEntry(ptr) as unknown as FileFunc
+	const origLock = entry(io.$xLock)
+	const origUnlock = entry(io.$xUnlock)
+	const origClose = entry(io.$xClose) as (pFile: number) => number
+	const locks = new Map<number, number>()
+	io.installMethods({
+		xLock(pFile: number, lockType: number) {
+			locks.set(pFile, lockType)
+			return origLock(pFile, lockType)
+		},
+		xUnlock(pFile: number, lockType: number) {
+			locks.set(pFile, lockType)
+			return origUnlock(pFile, lockType)
+		},
+		xClose(pFile: number) {
+			locks.delete(pFile)
+			return origClose(pFile)
+		},
+		xCheckReservedLock(pFile: number, pOut: number) {
+			let held = 0
+			for (const [other, lockType] of locks) {
+				if (other !== pFile && lockType >= capi.SQLITE_LOCK_RESERVED) {
+					held = 1
+					break
+				}
+			}
+			wasm.poke32(pOut, held)
+			return 0
+		},
+	}, false)
+	console.info("SQLite: crash recovery enabled for the OPFS SAH pool")
 }
 
 export default init

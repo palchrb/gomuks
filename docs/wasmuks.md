@@ -187,6 +187,27 @@ brings up the login screen from the cache. What it cannot cover without an
 account is the logged-in path, which is the same code plus the backend
 changes above.
 
+## Surviving a killed worker
+
+The database has to survive the worker dying at any moment: a page reload,
+an update reload, iOS killing a backgrounded app. SQLite handles that with
+its journal: a transaction interrupted halfway leaves a "hot journal", and
+the next connection rolls it back. The OPFS SAH pool VFS broke that. It has
+no file locking, and its `xCheckReservedLock` always reports that another
+connection holds a write lock, and SQLite only treats a journal as hot when
+nobody does. So an interrupted transaction was never rolled back, and the
+next start failed with "database disk image is malformed".
+
+`pkg/sqlite-wasm-js/bench/crash` reproduces it: killing a worker in the
+middle of writes corrupts the database within one to eight kills, with our
+pragmas and with upstream's. `sqlite_bridge.ts` now replaces that one
+method: all connections are in one worker, so it tracks their lock levels
+and answers truthfully. With it, the test survives a hundred kills. The
+same fix belongs in upstream gomuks, and arguably in the VFS itself.
+
+A database that is already damaged can't be repaired this way; the error
+screen offers to delete it (see below).
+
 ## Persistent storage
 
 Browsers may evict a site's storage under pressure or after inactivity unless
