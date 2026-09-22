@@ -33,9 +33,46 @@ func isConnectionError(err error) bool {
 	return errors.As(err, &httpErr) && httpErr.Response == nil && httpErr.RespError == nil
 }
 
-// finishStartupChecks redoes the checks Start had to skip because the server
-// was unreachable. It runs after the first successful sync, so the server is
-// reachable now; if it isn't after all, the next sync tries again.
+// checkUnverifiedWithServer is the startup path for a device whose local
+// database doesn't make it verified: the verification screen is next, and
+// what it offers depends on the server (whether SSSS is set up), so this
+// waits for the server. If the server can't be reached, the local state is
+// used and the checks are redone once a sync goes through, which happens
+// after verification.
+func (h *HiClient) checkUnverifiedWithServer(ctx context.Context) error {
+	err := h.CheckServerVersions(ctx)
+	if isConnectionError(err) {
+		// The server passed this check when the account logged in, so
+		// not being able to reach it now is no reason to refuse to start.
+		zerolog.Ctx(ctx).Warn().Err(err).
+			Msg("Couldn't reach the server to check its versions, retrying after the first sync")
+		h.startupChecksPending.Store(true)
+	} else if err != nil {
+		return err
+	}
+	h.VerificationState, err = h.checkIsCurrentDeviceVerified(ctx, false)
+	if isConnectionError(err) {
+		zerolog.Ctx(ctx).Warn().Err(err).
+			Msg("Couldn't reach the server to check the key backup, using local verification state")
+		h.VerificationState, err = h.checkIsCurrentDeviceVerified(ctx, true)
+		h.VerificationState.HasSSSS = h.VerificationState.IsVerified
+		h.startupChecksPending.Store(true)
+	}
+	if err != nil {
+		return err
+	}
+	h.VerificationState.StateChecked = true
+	return nil
+}
+
+// finishStartupChecks does the checks against the server that Start didn't
+// wait for: the spec versions, and the key backup comparison that completes
+// the verification state. It runs alongside the first sync of a verified
+// device, and again after the first successful sync when the server
+// couldn't be reached. An outdated server stops the sync, as Start would
+// have refused to run; a verification state that differs from the local
+// one is dispatched, and the frontend shows the verification screen as it
+// would have at startup.
 func (h *HiClient) finishStartupChecks(ctx context.Context) {
 	log := zerolog.Ctx(ctx)
 	err := h.CheckServerVersions(ctx)
@@ -43,8 +80,7 @@ func (h *HiClient) finishStartupChecks(ctx context.Context) {
 		h.startupChecksPending.Store(true)
 		return
 	} else if err != nil {
-		// Start would have refused to run at all with this error.
-		log.Err(err).Msg("Server version check failed after connecting, stopping sync")
+		log.Err(err).Msg("Server version check failed, stopping sync")
 		if fn := h.stopSync.Load(); fn != nil {
 			(*fn)()
 		}
@@ -56,7 +92,7 @@ func (h *HiClient) finishStartupChecks(ctx context.Context) {
 		h.startupChecksPending.Store(true)
 		return
 	} else if err != nil {
-		log.Err(err).Msg("Failed to check device verification after connecting")
+		log.Err(err).Msg("Failed to check device verification with the server")
 		return
 	}
 	state.StateChecked = true
@@ -68,6 +104,6 @@ func (h *HiClient) finishStartupChecks(ctx context.Context) {
 		h.VerificationState = state
 		h.dispatchCurrentState()
 	} else {
-		log.Debug().Msg("Verification state confirmed after connecting")
+		log.Debug().Msg("Verification state confirmed with the server")
 	}
 }
