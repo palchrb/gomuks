@@ -168,18 +168,24 @@ The cache is kept across logout: it's the program, not user data. It costs
 about as much disk as the wasm binary again, because the HTTP cache has its
 own copy.
 
-The backend also had to accept not reaching the server. `hicli.Start` checks
-the server's spec versions and compares the key backup version before it
-starts syncing, and exited on any error, including "no connection". Both
-checks now distinguish a request that got no answer from one the server
-rejected: the first is logged and redone after the first successful sync
-(`pkg/hicli/startupchecks.go`), the second still stops startup as before.
-Until the redo, the verification state is what the local database says.
-If the redo finds a difference, say another device reset the key backup in
-the meantime, the state is corrected and the frontend shows the verification
-screen as it would have at startup. This is shared code, and applies to the
-server build too: a native gomuks that starts while its homeserver is down
-now waits for it instead of exiting.
+The backend also had to accept not reaching the server. `hicli.Start` used
+to check the server's spec versions and compare the key backup version
+before starting the sync, and exited on any error, including "no
+connection". For a device whose local database holds the cross-signing keys
+it now starts the sync at once and does those two checks alongside it
+(`pkg/hicli/startupchecks.go`): nothing the server says changes what the
+first sync asks for, and the server can only take verification away, never
+grant it. That also removes two serial round-trips from every start, which
+on a mobile connection is up to a second before the first sync request goes
+out. A request that got no answer is retried after the first successful
+sync; an answer the server did give is acted on: an outdated server stops
+the sync, and a key backup that no longer matches, say another device reset
+it, switches the state to unverified and the frontend shows the
+verification screen as it would have at startup. An unverified device still
+waits for the server, since the verification screen needs to know whether
+SSSS is set up, with the local state as the offline fallback. This is
+shared code, and applies to the server build too: a native gomuks that
+starts while its homeserver is down now waits for it instead of exiting.
 
 The smoke test (`pkg/sqlite-wasm-js/bench/smoke.mjs`) covers the app shell:
 it stops its server after the first load and checks that a reload still
