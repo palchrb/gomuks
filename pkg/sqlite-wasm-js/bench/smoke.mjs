@@ -60,7 +60,12 @@ const check = (cond, msg) => {
 }
 const logs = []
 const attach = page => {
-	page.on("console", msg => logs.push(`[${msg.type()}] ${msg.text()}`))
+	page.on("console", msg => {
+		logs.push(`[${msg.type()}] ${msg.text()}`)
+		if (/precached the app shell/.test(msg.text())) {
+			page.evaluate(() => { window.__smokePrecached = true }).catch(() => {})
+		}
+	})
 	page.on("pageerror", err => logs.push(`[pageerror] ${err}`))
 }
 
@@ -102,6 +107,36 @@ check(!logs.some(l => /still in use after startup/.test(l)), "no database connec
 check(state.pickleKeyInOPFS === true, "pickle key stored in OPFS")
 check(logs.some(l => /Generated new pickle key/.test(l)), "fresh install generated a pickle key")
 check(!logs.some(l => /No pickle key provided/.test(l)), "backend received the pickle key")
+
+// Offline start: the service worker stored the app shell on this first visit,
+// so with the server gone a reload must still bring up the login screen. The
+// server is really stopped rather than emulated, so the worker's own fetches
+// fail too. Not possible against an external server.
+if (!externalURL) {
+	const precached = await tab1.waitForFunction(
+		() => window.__smokePrecached === true, null, { timeout: 60000 },
+	).catch(() => null)
+	check(Boolean(precached), "service worker precached the app shell")
+	server.closeAllConnections()
+	await new Promise(resolve => server.close(resolve))
+	logs.length = 0
+	await tab1.reload()
+	await tab1.waitForSelector("#mxlogin-username", { timeout: 60000 }).catch(() => null)
+	const offline = await tab1.evaluate(async () => ({
+		conn: window.client?.rpc?.connect?.current,
+		client: window.client?.state?.current,
+		loginForm: Boolean(document.querySelector("#mxlogin-username")),
+		controlled: navigator.serviceWorker.controller !== null,
+		cached: (await (await caches.open("wasmuks-shell-v1")).keys()).map(req => new URL(req.url).pathname),
+	}))
+	check(offline.controlled, "offline: page controlled by the service worker")
+	check(offline.cached.includes("/index.html") && offline.cached.some(p => /_gomuks-.*\.wasm$/.test(p)),
+		`offline: shell cache holds index.html and the wasm binary (${offline.cached.length} files)`)
+	check(offline.conn?.connected === true && !offline.conn?.error, "offline: worker connected without error")
+	check(offline.client?.is_initialized === true, "offline: backend initialized")
+	check(offline.loginForm, "offline: login form rendered")
+	await new Promise(resolve => server.listen(new URL(baseURL).port, "127.0.0.1", resolve))
+}
 
 const tab2 = await context.newPage()
 attach(tab2)

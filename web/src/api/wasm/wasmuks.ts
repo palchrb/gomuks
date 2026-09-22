@@ -44,13 +44,13 @@ declare global {
 }
 
 const MEDIA_CACHE_NAME = "wasmuks-media-v1"
-// Must match the name in public/wasmuks-media-sw.js.
+// Must match the name in public/wasmuks-sw.js.
 const RETRY_AFTER_HEADER = "X-Gomuks-Retry-After"
 
 // Cache key for a media URL: the path plus the thumbnail parameter, so the
 // thumbnail and the full image are separate entries but other parameters
 // (encryption flag, fallback avatar text) don't cause duplicates. Must match
-// mediaCacheKey in public/wasmuks-media-sw.js.
+// mediaCacheKey in public/wasmuks-sw.js.
 export function mediaCacheKey(url: URL): string {
 	const key = new URL(url.href)
 	const thumbnail = key.searchParams.get("thumbnail")

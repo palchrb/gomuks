@@ -17,19 +17,27 @@ import { readFileSync } from "fs"
 import vm from "vm"
 import { expect, suite, test } from "vitest"
 
-// The media service worker isn't a module, so it's loaded into a context with
-// the browser globals it expects. Range handling is worth testing because the
+// The service worker isn't a module, so it's loaded into a context with the
+// browser globals it expects. Range handling is worth testing because the
 // server build gets it from Go's http.ServeContent, while here it is ours, and
-// Safari won't play audio or video without it.
+// Safari won't play audio or video without it. The routing decides what is
+// available offline, and what must never be intercepted.
 interface ServiceWorkerScope {
 	sliceRange: (hit: Response, range: string) => Promise<Response | null>
 	withAcceptRanges: (hit: Response) => Response
+	shellRoute: (request: Request, scope: string) => { kind: string, key: string } | null
 }
 
+const scope = "https://example.invalid/chat/"
+
 function loadServiceWorker(): ServiceWorkerScope {
-	const src = readFileSync(`${__dirname}/../../../public/wasmuks-media-sw.js`, "utf-8")
+	const src = readFileSync(`${__dirname}/../../../public/wasmuks-sw.js`, "utf-8")
 	const context = {
-		self: { addEventListener: () => {}, location: { origin: "https://example.invalid" }},
+		self: {
+			addEventListener: () => {},
+			location: { origin: "https://example.invalid" },
+			registration: { scope },
+		},
 		caches: { open: async () => ({}) },
 		BroadcastChannel: class {
 			addEventListener() {}
@@ -95,5 +103,34 @@ suite("media service worker range requests", () => {
 		expect(resp.status).toBe(200)
 		expect(resp.headers.get("Accept-Ranges")).toBe("bytes")
 		expect(resp.headers.get("Content-Type")).toBe("video/mp4")
+	})
+})
+
+suite("service worker routing", () => {
+	const route = (path: string, init?: RequestInit) => sw.shellRoute(new Request(scope + path, init), scope)
+
+	test("index.html and client-side routes share one cache entry", () => {
+		const index = scope + "index.html"
+		expect(route("")).toEqual({ kind: "index", key: index })
+		expect(route("index.html")).toEqual({ kind: "index", key: index })
+		// Navigations can't be constructed in tests, so the URL forms stand in for them.
+	})
+
+	test("hashed assets are cache-first, entry points network-first", () => {
+		expect(route("assets/index-abc123.js")?.kind).toBe("asset")
+		expect(route("assets/_gomuks-abc123.wasm")?.kind).toBe("asset")
+		expect(route("config.json")?.kind).toBe("entry")
+		expect(route("manifest.json")?.kind).toBe("entry")
+		expect(route("sounds/bright.flac")?.kind).toBe("entry")
+		expect(route("_gomuks/codeblock/github.css")?.kind).toBe("entry")
+	})
+
+	test("what isn't the app is left to the browser", () => {
+		expect(route("wasmuks-sw.js")).toBeNull()
+		expect(route("pushmuks-sw.js")).toBeNull()
+		expect(route("element-call-embedded/index.html")).toBeNull()
+		expect(route("element-call-embedded/")).toBeNull()
+		expect(route("config.json", { method: "POST" })).toBeNull()
+		expect(sw.shellRoute(new Request("https://example.invalid/other/index.html"), scope)).toBeNull()
 	})
 })

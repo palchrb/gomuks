@@ -164,9 +164,23 @@ export default class WasmClient extends RPCClient {
 		document.addEventListener("visibilitychange", this.#onVisibilityChange)
 		this.#checkForUpdate(true).catch(err => console.warn("Failed to record frontend version", err))
 		this.#checkStorage().catch(err => console.warn("Failed to check storage status", err))
-		navigator.serviceWorker.register("wasmuks-media-sw.js").then(reg => {
-			console.info("Media service worker registered", reg)
-		}).catch(err => console.error("Failed to register media service worker", err))
+		navigator.serviceWorker.register("wasmuks-sw.js").then(reg => {
+			console.info("Service worker registered", reg)
+		}).catch(err => console.error("Failed to register service worker", err))
+		navigator.serviceWorker.addEventListener("message", evt => {
+			if (evt.data?.type === "precached") {
+				console.info("Service worker precached the app shell:", evt.data)
+			}
+		})
+	}
+
+	// Asks the service worker to store the files a start needs, so the app
+	// opens offline from the next start on. Sent once the backend is up: by
+	// then the files are downloaded, so this costs no bandwidth.
+	#precacheShell() {
+		navigator.serviceWorker.ready.then(reg => {
+			reg.active?.postMessage({ type: "precache" })
+		}).catch(err => console.warn("Service worker not ready for precaching", err))
 	}
 
 	#acquireLock(): Promise<boolean> {
@@ -395,6 +409,7 @@ export default class WasmClient extends RPCClient {
 		if (realEvtData.command === "wasm-connection") {
 			this.#ready = realEvtData.data.connected
 			if (this.#ready) {
+				this.#precacheShell()
 				const queued = this.#pending
 				this.#pending = []
 				for (const payload of queued) {

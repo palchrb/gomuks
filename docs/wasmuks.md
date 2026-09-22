@@ -70,7 +70,8 @@ automatically when the files are served statically (the Go server injects a
 
 Recommended headers:
 
-* `index.html`, `config.json`, `wasmuks-media-sw.js`: `Cache-Control: no-cache`
+* `index.html`, `config.json`, `manifest.json`, `wasmuks-sw.js`,
+  `wasmuks-assets.json`: `Cache-Control: no-cache`
 * everything under `assets/`: `Cache-Control: public, max-age=31536000, immutable`
   (file names are content-hashed)
 * enable brotli, or gzip if that is all the server has: the wasm binary is
@@ -130,6 +131,62 @@ from, but a poor place to *use* them: for someone who uses the Pi itself as a
 client, run the native `gomuks` server on the Pi for that account instead
 (about 50 MB of RAM) and use the wasm build from phones and laptops.
 
+## Starting offline
+
+Opening the app without a connection shows the rooms and history it has, with
+the offline line at the bottom, and syncs when the connection is back. Two
+things had to change for that.
+
+The app itself has to come from somewhere. `index.html` is served with
+`no-cache`, which is right for picking up new builds but means the browser
+won't use its copy when the server can't be reached: on iOS that shows up as
+the system's own "the server stopped responding" page. The service worker
+(`web/public/wasmuks-sw.js`) therefore keeps the app in the Cache API:
+
+* `index.html`, `config.json`, `manifest.json` and the other unhashed files
+  are fetched from the network first, and the copy in the cache is used when
+  the network fails, or hasn't answered within 8 seconds while there is a copy
+  to use. A first load with nothing cached waits as long as it takes, exactly
+  as it would without a service worker. A 5xx while the deployment restarts
+  also falls back to the copy; a 404 is an answer and goes through.
+* everything under `assets/` is content-hashed and immutable, so it comes from
+  the cache when it is there and is stored when it isn't. The wasm binary is
+  compiled from the response stream, and the copy for the cache is taken on
+  the way through, so this adds nothing to startup.
+* a new `index.html` from the network means a new build: the previous build's
+  files are dropped from the cache, using `wasmuks-assets.json`, a list of the
+  build's files written by `vite.config.ts`.
+* a service worker only sees requests made after it took over, so on the very
+  first visit the page loaded everything before it existed. Once the backend
+  is up, the page asks the worker to store the core files (what `index.html`
+  loads, the fonts, the wasm worker and binaries; the manifest marks them).
+  By then they have all been downloaded, so those fetches are answered from
+  the HTTP cache. The rest (katex, the code editor, the map, image packs) is
+  stored when first used.
+
+The cache is kept across logout: it's the program, not user data. It costs
+about as much disk as the wasm binary again, because the HTTP cache has its
+own copy.
+
+The backend also had to accept not reaching the server. `hicli.Start` checks
+the server's spec versions and compares the key backup version before it
+starts syncing, and exited on any error, including "no connection". Both
+checks now distinguish a request that got no answer from one the server
+rejected: the first is logged and redone after the first successful sync
+(`pkg/hicli/startupchecks.go`), the second still stops startup as before.
+Until the redo, the verification state is what the local database says.
+If the redo finds a difference, say another device reset the key backup in
+the meantime, the state is corrected and the frontend shows the verification
+screen as it would have at startup. This is shared code, and applies to the
+server build too: a native gomuks that starts while its homeserver is down
+now waits for it instead of exiting.
+
+The smoke test (`pkg/sqlite-wasm-js/bench/smoke.mjs`) covers the app shell:
+it stops its server after the first load and checks that a reload still
+brings up the login screen from the cache. What it cannot cover without an
+account is the logged-in path, which is the same code plus the backend
+changes above.
+
 ## Persistent storage
 
 Browsers may evict a site's storage under pressure or after inactivity unless
@@ -187,7 +244,10 @@ it. The window is the same as the native build's.
 
 **Picking up a new build.** A reload always fetches `index.html` fresh, so
 Ctrl+R or restarting the app gets the newest build; unchanged files still
-come from the browser cache, so it costs nothing when nothing changed.
+come from the browser cache, so it costs nothing when nothing changed. The
+service worker keeps a copy of the app for starting offline (see below), but
+asks the network first, so it never keeps an old build alive when the server
+has a newer one.
 Without a reload, a tab that has been in the background compares the served
 `index.html` against the one it loaded with when it becomes visible again,
 and reloads if they differ. If a deploy happens while the page is open and a
@@ -313,7 +373,7 @@ missing feature rather than a broken one. The upload step is now replaceable
 (`Gomuks.UploadMediaFunc`) and the wasm build does it in memory. Previews
 without an image were never affected.
 
-Media is served by a service worker (`web/public/wasmuks-media-sw.js`) out of
+Media is served by a service worker (`web/public/wasmuks-sw.js`) out of
 the Cache API, with the backend in the worker downloading on demand. The
 server build serves the same URLs over HTTP, so the frontend does not know the
 difference, with one thing that had to be reimplemented: byte ranges. The
@@ -498,6 +558,9 @@ Not done, kept as options:
   does, but wipes it when the window closes.
 * **One tab at a time.** The database can only be opened by one worker; a second
   tab shows a message asking to close the first one.
+* **Media offline.** The app and its database open without a connection, but
+  media that wasn't viewed while online isn't there; the service worker
+  answers those requests with an error until the connection is back.
 * **No push notifications and no sync while the tab is closed.** Use a native
   Matrix client on the phone for push; Matrix accounts can have many devices.
 * **Storage can be evicted.** If the browser refuses persistent storage (shown
