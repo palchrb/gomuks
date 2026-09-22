@@ -213,8 +213,59 @@ async function loadPickleKey(): Promise<Uint8Array> {
 	return key
 }
 
+// The last lines the backend logged, so that "Go process exited" can say
+// what happened. On a phone there is no console to read it from, and the
+// message is all there is. Go's own stderr (panics, runtime fatals) goes
+// through fs.writeSync in go_wasm_exec.js, which this build otherwise drops;
+// the log writer calls console methods.
+const RECENT_LOG_LINES = 40
+const recentLogs: string[] = []
+function rememberLog(line: string) {
+	recentLogs.push(line.length > 400 ? line.slice(0, 400) + "…" : line)
+	if (recentLogs.length > RECENT_LOG_LINES) {
+		recentLogs.shift()
+	}
+}
+function captureLogs() {
+	for (const level of ["log", "info", "warn", "error"] as const) {
+		const original = console[level].bind(console)
+		console[level] = (...args: unknown[]) => {
+			rememberLog(`${level}: ${args.map(arg => {
+				if (typeof arg === "string") {
+					return arg
+				}
+				try {
+					return JSON.stringify(arg)
+				} catch {
+					return String(arg)
+				}
+			}).join(" ")}`)
+			original(...args)
+		}
+	}
+	const fs = (globalThis as unknown as { fs: { writeSync: (fd: number, buf: Uint8Array) => number } }).fs
+	const decoder = new TextDecoder()
+	let pending = ""
+	fs.writeSync = (_fd: number, buf: Uint8Array) => {
+		pending += decoder.decode(buf)
+		let nl
+		while ((nl = pending.indexOf("\n")) !== -1) {
+			const line = pending.slice(0, nl)
+			pending = pending.slice(nl + 1)
+			rememberLog(`stderr: ${line}`)
+			console.error(line)
+		}
+		return buf.length
+	}
+}
+
 ;(async () => {
+	captureLogs()
 	const go = new Go()
+	let exitCode: number | undefined
+	go.exit = (code: number) => {
+		exitCode = code
+	}
 	await initSqlite()
 	self.wasmuksPickleKey = await loadPickleKey()
 	const compileStart = performance.now()
@@ -226,12 +277,17 @@ async function loadPickleKey(): Promise<Uint8Array> {
 	)
 	await setupMediaChannel()
 	await go.run(instance)
+	// Panics and fatal logs are the last thing written, so the tail is
+	// what matters. Skip the stack trace lines of a panic.
+	const tail = recentLogs
+		.filter(line => !/^stderr: (goroutine \d|\s|\S+\.go:\d|[\w./]+\(|\[originating from)/.test(line))
+		.slice(-8)
 	self.postMessage({
 		command: "wasm-connection",
 		data: {
 			connected: false,
 			reconnecting: false,
-			error: `Go process exited`,
+			error: `Go process exited (code ${exitCode ?? "?"}). Last log lines:\n${tail.join("\n")}`,
 		},
 	})
 })().catch(err => {
