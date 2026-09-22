@@ -120,6 +120,18 @@ div.sync-bar {
 		color: var(--error-color);
 	}
 
+	/* Shows the error, which can be long, and a button. */
+	&.failed {
+		height: auto;
+		min-height: calc(1.25rem + var(--window-bottom-margin));
+		padding: .5rem .5rem calc(.5rem + var(--window-bottom-margin));
+		flex-direction: column;
+		line-height: 1.3;
+		text-align: center;
+		overflow-wrap: anywhere;
+		pointer-events: auto;
+	}
+
 	/* No network is a state of the world, not a failure of the app. */
 	&.offline {
 		border-top-color: var(--border-color);

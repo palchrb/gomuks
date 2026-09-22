@@ -106,8 +106,11 @@ const WasmSyncBar = ({ rpc, syncStatus }: WasmSyncBarProps): JSX.Element | null 
 			Syncing...
 		</div>
 	} else if (syncStatus.type === "permanently-failed") {
-		return <div className="sync-bar disconnected" title={syncStatus.error}>
-			Sync failed permanently
+		// Nothing retries after this, and on a phone there is no hover to
+		// read the reason from, so say it and offer the one way out.
+		return <div className="sync-bar disconnected failed">
+			<div>Sync failed permanently: {syncStatus.error ?? "unknown error"}</div>
+			<button onClick={() => window.location.reload()}>Reload</button>
 		</div>
 	}
 	const since = Math.max(syncStatus.last_sync ?? 0, lastResumedAt)
