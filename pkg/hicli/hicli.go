@@ -79,6 +79,7 @@ type HiClient struct {
 	syncLock              sync.Mutex
 	stopping              bool
 	stopSync              atomic.Pointer[context.CancelFunc]
+	startupChecksPending  atomic.Bool
 	encryptLock           sync.Mutex
 	loginLock             sync.Mutex
 	loadLock              sync.Mutex
@@ -368,11 +369,28 @@ func (h *HiClient) repairOTKsIfNeeded(ctx context.Context) error {
 func (h *HiClient) Start(ctx context.Context) error {
 	if h.Account != nil {
 		err := h.CheckServerVersions(ctx)
-		if err != nil {
+		if isConnectionError(err) {
+			// The server passed this check when the account logged in, so
+			// not being able to reach it now is no reason to refuse to
+			// start: redo the check once a sync goes through.
+			zerolog.Ctx(ctx).Warn().Err(err).
+				Msg("Couldn't reach the server to check its versions, retrying after the first sync")
+			h.startupChecksPending.Store(true)
+		} else if err != nil {
 			return err
 		}
 
 		h.VerificationState, err = h.checkIsCurrentDeviceVerified(ctx, false)
+		if isConnectionError(err) {
+			// The key backup comparison needs the server. Go with what the
+			// local database says so cached history is usable offline, and
+			// redo the full check once a sync goes through.
+			zerolog.Ctx(ctx).Warn().Err(err).
+				Msg("Couldn't reach the server to check the key backup, using local verification state")
+			h.VerificationState, err = h.checkIsCurrentDeviceVerified(ctx, true)
+			h.VerificationState.HasSSSS = h.VerificationState.IsVerified
+			h.startupChecksPending.Store(true)
+		}
 		if err != nil {
 			return err
 		}

@@ -95,7 +95,8 @@ var noCacheFiles = map[string]bool{
 	"index.html":          true,
 	"config.json":         true,
 	"manifest.json":       true,
-	"wasmuks-media-sw.js": true,
+	"wasmuks-sw.js":       true,
+	"wasmuks-assets.json": true,
 	"pushmuks-sw.js":      true,
 }
 
@@ -141,7 +142,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if strings.HasPrefix(name, "assets/") {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	}
-	if name == "wasmuks-media-sw.js" {
+	if name == "wasmuks-sw.js" {
 		w.Header().Set("Service-Worker-Allowed", "/")
 	}
 	w.Header().Set("Content-Type", contentType)

@@ -76,6 +76,9 @@ func (h *HiClient) markSyncOK() {
 	if h.SyncStatus.Swap(syncOK) != syncOK {
 		h.EventHandler(syncOK)
 	}
+	if h.startupChecksPending.CompareAndSwap(true, false) {
+		go h.finishStartupChecks(h.Log.WithContext(context.Background()))
+	}
 }
 
 func (h *HiClient) preProcessSyncResponse(ctx context.Context, resp *mautrix.RespSync) (hasEncrypted bool) {
